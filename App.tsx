@@ -4,7 +4,6 @@ import { KeyboardLayout, AppSettings, ThemeConfig, KeyboardMode } from './types'
 import { KEYBOARD_ROWS, SYMBOLS_ROWS, ARABIC_MAP, ARABIC_PHONETIC_MAP, JATIYO_MAP, UNIBIJOY_MAP, PHONETIC_MAP, NUMERIC_ROWS, NUMERALS, PROVHAT_MAP } from './constants/layouts';
 import { KEYBOARD_THEMES } from './constants/themes';
 import { getAIAssistance, AITask } from './services/geminiService';
-// Fix: Use correct import for GoogleGenAI and Modality following coding guidelines
 import { GoogleGenAI, Modality } from '@google/genai';
 
 function encode(bytes: Uint8Array) {
@@ -14,6 +13,34 @@ function encode(bytes: Uint8Array) {
     binary += String.fromCharCode(bytes[i]);
   }
   return btoa(binary);
+}
+
+function decode(base64: string) {
+  const binaryString = atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
+
+async function decodeAudioData(
+  data: Uint8Array,
+  ctx: AudioContext,
+  sampleRate: number,
+  numChannels: number,
+): Promise<AudioBuffer> {
+  const dataInt16 = new Int16Array(data.buffer);
+  const frameCount = dataInt16.length / numChannels;
+  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
+  for (let channel = 0; channel < numChannels; channel++) {
+    const channelData = buffer.getChannelData(channel);
+    for (let i = 0; i < frameCount; i++) {
+      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+    }
+  }
+  return buffer;
 }
 
 const STORAGE_KEY = 'ekushey_kb_v2_settings';
@@ -49,22 +76,22 @@ const App: React.FC = () => {
   const [isHelpOpen, setIsHelpOpen] = useState<boolean>(false); 
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [isSmartMenuOpen, setIsSmartMenuOpen] = useState<boolean>(false);
-
-  const [suggestions, setSuggestions] = useState<string[]>([]);
-  const suggestionTimeoutRef = useRef<number | null>(null);
+  const [isClipboardOpen, setIsClipboardOpen] = useState<boolean>(false);
+  const [clipboardItems, setClipboardItems] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
 
   const phoneticBuffer = useRef<string>('');
   const lastInsertedLength = useRef<number>(0);
   const lastSpaceTime = useRef<number>(0);
   const swipeStartX = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const hwInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sessionRef = useRef<any>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
 
   const [settings, setSettings] = useState<ExtendedAppSettings>(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
-    // Fix: Remove invalid type annotations and assignments within the object literal
     const defaults: ExtendedAppSettings = {
       defaultLayout: KeyboardLayout.ENGLISH,
       fontSize: 18,
@@ -166,7 +193,6 @@ const App: React.FC = () => {
     return rows;
   }, [isSymbolMode, isNumericMode, settings.enableNumberRow]);
 
-  // Spacebar Label Logic updated to use Bengali scripts as requested
   const spacebarLabel = useMemo(() => {
     const labels: Record<string, string> = {
       [KeyboardLayout.ENGLISH]: 'English',
@@ -194,6 +220,65 @@ const App: React.FC = () => {
     setHistory(newHistory);
     setHistoryIndex(newHistory.length - 1);
     setText(newText);
+  };
+
+  const speakText = async () => {
+    if (!text.trim()) return;
+    setIsLoading(true);
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash-preview-tts",
+        contents: [{ parts: [{ text: text }] }],
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
+          },
+        },
+      });
+      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (base64Audio) {
+        const outCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+        const audioBuffer = await decodeAudioData(decode(base64Audio), outCtx, 24000, 1);
+        const source = outCtx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(outCtx.destination);
+        source.start();
+      }
+    } catch (e) {
+      console.error("TTS Error", e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleTranslate = async () => {
+    if (!text.trim()) return;
+    setIsLoading(true);
+    try {
+      const res = await getAIAssistance(text, 'translate', { to: 'English' });
+      if (res) updateTextWithHistory(res);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleHandwriting = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsLoading(true);
+    try {
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64 = (reader.result as string).split(',')[1];
+        const res = await getAIAssistance('', 'handwriting', { imageData: base64, mimeType: file.type });
+        if (res) updateTextWithHistory(text + " " + res);
+      };
+      reader.readAsDataURL(file);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleBackspace = () => {
@@ -775,6 +860,24 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* Clipboard UI */}
+      {isClipboardOpen && (
+        <div className="fixed inset-0 z-[500] bg-black/60 backdrop-blur-sm flex items-end justify-center">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-xl h-1/2 rounded-t-[3rem] p-8 shadow-2xl animate-in slide-in-from-bottom duration-300 flex flex-col">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-2xl font-black font-bangla">ক্লিপবোর্ড</h3>
+              <button onClick={() => setIsClipboardOpen(false)} className="p-2"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M6 18L18 6M6 6l12 12"/></svg></button>
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-3">
+               {clipboardItems.length === 0 ? <p className="text-slate-400 text-center mt-10">কোনো তথ্য নেই</p> : 
+               clipboardItems.map((item, i) => (
+                 <div key={i} onClick={() => { insertChar(item); setIsClipboardOpen(false); }} className="p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl cursor-pointer hover:bg-slate-100">{item}</div>
+               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Smart Actions AI Menu */}
       {isSmartMenuOpen && (
         <div className="fixed inset-0 z-[500] bg-black/60 backdrop-blur-sm flex items-end justify-center animate-in fade-in duration-300">
@@ -819,8 +922,9 @@ const App: React.FC = () => {
       )}
 
       <main className="w-full max-w-4xl h-full flex flex-col p-6 gap-6">
-        <div className={`glass-panel rounded-[2.5rem] shadow-2xl border-t-2 border-blue-500/30 p-8 transition-all ${showDashboard ? 'flex-1' : 'h-40'}`}>
+        <div className={`glass-panel rounded-[2.5rem] shadow-2xl border-t-2 border-blue-500/30 p-8 transition-all relative ${showDashboard ? 'flex-1' : 'h-40'}`}>
             <textarea ref={textareaRef} value={text} onFocus={() => setShowDashboard(false)} onChange={(e) => updateTextWithHistory(e.target.value)} placeholder="টাইপ করা শুরু করুন..." style={{ fontSize: `${settings.fontSize}px` }} className={`w-full h-full bg-transparent border-none focus:ring-0 resize-none transition-all placeholder:text-slate-300 dark:placeholder:text-slate-700 font-medium ${getScriptClass(layout)}`} dir={layout.includes('Arabic') ? 'rtl' : 'ltr'} />
+            {isLoading && <div className="absolute inset-0 flex items-center justify-center bg-white/20 backdrop-blur-sm rounded-[2.5rem] z-20"><div className="w-8 h-8 border-4 border-teal-500 border-t-transparent rounded-full animate-spin"></div></div>}
         </div>
 
         {showDashboard ? (
@@ -862,13 +966,31 @@ const App: React.FC = () => {
                   <div className="absolute inset-0 bg-black pointer-events-none z-0" style={{ opacity: 1 - (settings.customThemeBrightness || 70) / 100 }}></div>
               )}
               
-              <div className="flex justify-between items-center h-14 px-2 relative z-10">
-                  <button onClick={() => setShowDashboard(true)} className="p-3 opacity-50 hover:opacity-100"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 6h16M4 12h16M4 18h16"/></svg></button>
-                  <div className="flex gap-4 items-center">
-                      <button onClick={() => setIsSmartMenuOpen(true)} className="p-3 text-blue-500"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg></button>
-                      <button onClick={() => setIsEmojiOpen(!isEmojiOpen)} className="p-3 opacity-50"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></button>
-                      <button onClick={() => toggleVoiceInput()} className={`p-3 ${isRecording ? 'text-red-500 animate-pulse' : 'opacity-50'}`}><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg></button>
+              {/* Toolbar with requested icons */}
+              <div className="flex items-center h-14 px-2 relative z-10 overflow-x-auto no-scrollbar gap-1 border-b dark:border-white/10 mb-2">
+                  <button onClick={() => setShowDashboard(true)} className="p-3 opacity-50 hover:opacity-100 flex-shrink-0"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+                  <div className="h-6 w-px bg-slate-200 dark:bg-white/10 mx-1 flex-shrink-0"></div>
+                  
+                  <button onClick={() => setIsClipboardOpen(true)} className="p-3 opacity-60 flex-shrink-0" title="Clipboard">📋</button>
+                  
+                  <div className="flex gap-0.5 flex-shrink-0">
+                    <button onClick={() => {setLayout(KeyboardLayout.BANGLA_AVRO); setIsNumericMode(false);}} className={`p-3 text-[14px] font-bold ${layout === KeyboardLayout.BANGLA_AVRO ? 'text-teal-500' : 'opacity-60'} font-bangla`}>অ</button>
+                    <button onClick={() => {setLayout(KeyboardLayout.ARABIC); setIsNumericMode(false);}} className={`p-3 text-[14px] font-bold ${layout === KeyboardLayout.ARABIC ? 'text-teal-500' : 'opacity-60'} font-arabic`}>ع</button>
+                    <button onClick={() => {setLayout(KeyboardLayout.ENGLISH); setIsNumericMode(false);}} className={`p-3 text-[14px] font-bold ${layout === KeyboardLayout.ENGLISH ? 'text-teal-500' : 'opacity-60'} font-inter`}>EN</button>
                   </div>
+
+                  <button onClick={() => setIsNumericMode(!isNumericMode)} className={`p-3 text-[14px] font-black ${isNumericMode ? 'text-teal-500' : 'opacity-60'} flex-shrink-0`}>🔢</button>
+                  
+                  <button onClick={speakText} className="p-3 opacity-60 flex-shrink-0" title="Speak Sentence">🔊</button>
+                  
+                  <button onClick={() => hwInputRef.current?.click()} className="p-3 opacity-60 flex-shrink-0" title="Handwriting">✍️</button>
+                  <input type="file" ref={hwInputRef} className="hidden" accept="image/*" onChange={handleHandwriting} />
+                  
+                  <button onClick={handleTranslate} className="p-3 opacity-60 flex-shrink-0" title="Translate">🌐</button>
+                  
+                  <div className="flex-1"></div>
+                  <button onClick={() => setIsEmojiOpen(!isEmojiOpen)} className="p-3 opacity-50 flex-shrink-0"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></button>
+                  <button onClick={() => toggleVoiceInput()} className={`p-3 flex-shrink-0 ${isRecording ? 'text-red-500 animate-pulse' : 'opacity-50'}`}><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg></button>
               </div>
 
               <div className="flex flex-col gap-1.5 relative z-10 flex-grow justify-end pb-4">
