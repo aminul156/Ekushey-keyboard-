@@ -1,0 +1,7 @@
+{
+  "name": "Ekushey Keyboard",
+  "description": "A sophisticated multi-lingual virtual and physical keyboard supporting Bangla (Phonetic, Avro, Jatiyo, UniBijoy), English, and Arabic with integrated AI assistance.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
