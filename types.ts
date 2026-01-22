@@ -35,7 +35,7 @@ export interface ThemeConfig {
 }
 
 export interface AppSettings {
-  isSetupComplete: boolean; // Track onboarding
+  isSetupComplete: boolean;
   defaultLayout: KeyboardLayout;
   fontSize: number;
   theme: string;
@@ -100,4 +100,8 @@ export interface AppSettings {
   smartCompose: boolean;
   smartTranslate: boolean;
   enableDrawingAssist: boolean;
+  // Avro Specific Settings
+  enableBanglaInNumberPad: boolean;
+  oldStyleReph: boolean;
+  autoVowelForming: boolean;
 }
