@@ -108,11 +108,10 @@ const App: React.FC = () => {
   const lastInsertedLen = useRef<number>(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   
-  // Refined Swipe Logic Refs
   const spaceRef = useRef<HTMLButtonElement>(null);
-  const touchStartX = useRef<number | null>(null);
-  const hasMovedSignificant = useRef<boolean>(false);
-
+  const startX = useRef<number | null>(null);
+  const isSwiping = useRef<boolean>(false);
+  
   const [settings, setSettings] = useState<ExtendedAppSettings>(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (!saved) return DEFAULT_SETTINGS;
@@ -138,7 +137,7 @@ const App: React.FC = () => {
       nextIdx = (currentIdx - 1 + layouts.length) % layouts.length;
     }
     setLayout(layouts[nextIdx]);
-    if (navigator.vibrate) navigator.vibrate(25);
+    if (navigator.vibrate) navigator.vibrate(20);
   }, [layout, settings.enabledLayouts]);
 
   const updateTextAndCursor = (newText: string, newCursorPos: number) => {
@@ -169,11 +168,11 @@ const App: React.FC = () => {
     return isShift ? key.toUpperCase() : key;
   }, [isNumericMode, isShifted, isCapsLock, layout, settings.enableBanglaInNumberPad]);
 
-  const insertChar = (char: string) => {
+  const insertChar = useCallback((char: string) => {
     const el = textareaRef.current;
     if (!el) return;
-    const start = el.selectionStart;
-    const end = el.selectionEnd;
+    const start = el.selectionStart || 0;
+    const end = el.selectionEnd || 0;
     let currentText = text.substring(0, start) + text.substring(end);
     let insertionIndex = start;
 
@@ -203,57 +202,38 @@ const App: React.FC = () => {
     const charToInsert = getMappedChar(char);
     updateTextAndCursor(currentText.substring(0, insertionIndex) + charToInsert + currentText.substring(insertionIndex), insertionIndex + charToInsert.length);
     phoneticBuffer.current = ''; lastInsertedLen.current = 0;
+  }, [text, layout, isNumericMode, isShifted, isCapsLock, settings, getMappedChar]);
+
+  // Pointer Swipe Logic
+  const onSpacePointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    startX.current = e.clientX;
+    isSwiping.current = false;
+    e.currentTarget.setPointerCapture(e.pointerId);
   };
 
-  // --- NATIVE SWIPE LOGIC ATTACHMENT ---
-  useEffect(() => {
-    const el = spaceRef.current;
-    if (!el) return;
+  const onSpacePointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (startX.current === null) return;
+    const diffX = Math.abs(e.clientX - startX.current);
+    if (diffX > 8) { // Start swiping earlier
+      isSwiping.current = true;
+    }
+  };
 
-    const onTouchStart = (e: TouchEvent) => {
-      touchStartX.current = e.touches[0].clientX;
-      hasMovedSignificant.current = false;
-    };
+  const onSpacePointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (startX.current === null) return;
+    const totalDiffX = e.clientX - startX.current;
+    const swipeThreshold = 30; // Sensitive threshold for better UX
 
-    const onTouchMove = (e: TouchEvent) => {
-      if (touchStartX.current === null) return;
-      const currentX = e.touches[0].clientX;
-      const diffX = Math.abs(currentX - touchStartX.current);
-      
-      if (diffX > 10) {
-        hasMovedSignificant.current = true;
-        // CRITICAL: Block browser swipe-to-back behavior
-        if (e.cancelable) e.preventDefault();
-      }
-    };
-
-    const onTouchEnd = (e: TouchEvent) => {
-      if (touchStartX.current === null) return;
-      const touchEndX = e.changedTouches[0].clientX;
-      const diffX = touchEndX - touchStartX.current;
-      const swipeThreshold = 50;
-
-      if (Math.abs(diffX) > swipeThreshold) {
-        cycleLayout(diffX > 0 ? 'prev' : 'next');
-      } else if (!hasMovedSignificant.current) {
-        insertChar(' ');
-      }
-
-      touchStartX.current = null;
-      hasMovedSignificant.current = false;
-    };
-
-    // Attach native listeners with passive: false to allow preventDefault()
-    el.addEventListener('touchstart', onTouchStart, { passive: false });
-    el.addEventListener('touchmove', onTouchMove, { passive: false });
-    el.addEventListener('touchend', onTouchEnd, { passive: false });
-
-    return () => {
-      el.removeEventListener('touchstart', onTouchStart);
-      el.removeEventListener('touchmove', onTouchMove);
-      el.removeEventListener('touchend', onTouchEnd);
-    };
-  }, [cycleLayout, insertChar]);
+    if (Math.abs(totalDiffX) > swipeThreshold) {
+      cycleLayout(totalDiffX > 0 ? 'prev' : 'next');
+    } else if (!isSwiping.current) {
+      insertChar(' ');
+    }
+    
+    startX.current = null;
+    isSwiping.current = false;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+  };
 
   const renderSetupWizard = () => {
     const steps = [
@@ -464,8 +444,12 @@ const App: React.FC = () => {
                   <div className="flex justify-center gap-1 mt-1">
                       <button 
                         ref={spaceRef}
-                        className={`h-16 flex-[4] rounded-xl bg-white/10 text-lg font-bold uppercase text-white transition-all active:bg-white/20 select-none overflow-hidden touch-none relative`}
-                        style={{ touchAction: 'none' }}
+                        onPointerDown={onSpacePointerDown}
+                        onPointerMove={onSpacePointerMove}
+                        onPointerUp={onSpacePointerUp}
+                        onPointerCancel={(e) => { startX.current = null; isSwiping.current = false; e.currentTarget.releasePointerCapture(e.pointerId); }}
+                        className={`h-16 flex-[4] rounded-xl bg-white/10 text-lg font-bold uppercase text-white transition-all active:bg-white/20 select-none overflow-hidden relative touch-none`}
+                        style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
                       >
                         <div key={layout} className="absolute inset-0 flex items-center justify-center animate-in fade-in slide-in-from-left-4 duration-300 pointer-events-none">
                            {layout === KeyboardLayout.BANGLA_AVRO ? 'অভ্র' : 
@@ -475,9 +459,9 @@ const App: React.FC = () => {
                             layout === KeyboardLayout.BANGLA_PROVHAT ? 'প্রভাত' : layout}
                         </div>
                         <div className="absolute bottom-2 w-full flex justify-center gap-1.5 opacity-30 pointer-events-none">
-                          <div className="w-1.5 h-1.5 rounded-full bg-white"></div>
-                          <div className="w-1.5 h-1.5 rounded-full bg-white"></div>
-                          <div className="w-1.5 h-1.5 rounded-full bg-white"></div>
+                          <div className={`w-1.5 h-1.5 rounded-full transition-colors ${layout === KeyboardLayout.BANGLA_AVRO ? 'bg-white' : 'bg-white/30'}`}></div>
+                          <div className={`w-1.5 h-1.5 rounded-full transition-colors ${layout === KeyboardLayout.ENGLISH ? 'bg-white' : 'bg-white/30'}`}></div>
+                          <div className={`w-1.5 h-1.5 rounded-full transition-colors ${layout === KeyboardLayout.ARABIC ? 'bg-white' : 'bg-white/30'}`}></div>
                         </div>
                       </button>
                       <button onMouseDown={e => {e.preventDefault(); const s = textareaRef.current?.selectionStart || 0; updateTextAndCursor(text.substring(0, s-1) + text.substring(s), s-1)}} className={`h-16 w-16 rounded-xl bg-white/10 flex items-center justify-center text-white`}>⌫</button>
