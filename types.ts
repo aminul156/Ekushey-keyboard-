@@ -35,6 +35,7 @@ export interface ThemeConfig {
 }
 
 export interface AppSettings {
+  isSetupComplete: boolean; // Track onboarding
   defaultLayout: KeyboardLayout;
   fontSize: number;
   theme: string;
@@ -78,9 +79,9 @@ export interface AppSettings {
   showComma: boolean;
   showPeriod: boolean;
   kbSize: number;
-  kbWidth: number; // New: width control
-  posX: number; // New: horizontal position
-  posY: number; // New: vertical position
+  kbWidth: number;
+  posX: number;
+  posY: number;
   kbTransparency: number;
   keyPopupDismissDelay: string;
   vibrationDuration: string;
