@@ -100,7 +100,7 @@ const App: React.FC = () => {
     const defaults: ExtendedAppSettings = {
       defaultLayout: KeyboardLayout.ENGLISH,
       fontSize: 18,
-      theme: 'midnight_black',
+      theme: 'bleached_white',
       customThemeBrightness: 70,
       showKeyBorder: true,
       showSuggestions: true,
@@ -607,6 +607,16 @@ const App: React.FC = () => {
       <div className="flex flex-col min-h-screen font-inter">
         {renderHeader(settingsSubPage.charAt(0).toUpperCase() + settingsSubPage.slice(1).replace('-', ' '), true)}
         <div className="p-6 space-y-4">
+          {settingsSubPage === 'preferences' && (
+            <div className="space-y-4 font-bangla">
+              {toggle('অটো ক্যাপিটালাইজেশন', settings.autoCapitalization, (v) => setSettings({...settings, autoCapitalization: v}))}
+              {toggle('ডাবল স্পেস পিরিয়ড (. )', settings.doubleSpacePeriod, (v) => setSettings({...settings, doubleSpacePeriod: v}))}
+              {toggle('ভয়েস টাইপিং বাটন দেখান', settings.voiceInputKey, (v) => setSettings({...settings, voiceInputKey: v}))}
+              {toggle('ভাইব্রেশন', settings.vibrateOnKeypress, (v) => setSettings({...settings, vibrateOnKeypress: v}))}
+              {toggle('সাউন্ড', settings.soundOnKeypress, (v) => setSettings({...settings, soundOnKeypress: v}))}
+              {toggle('কী পপআপ', settings.popupOnKeypress, (v) => setSettings({...settings, popupOnKeypress: v}))}
+            </div>
+          )}
           {settingsSubPage === 'appearance' && (
             <div className="space-y-6">
               <button onClick={() => setSettingsSubPage('kb-mode')} className="w-full p-5 flex items-center justify-between bg-white dark:bg-slate-800 rounded-2xl shadow-sm">
@@ -616,7 +626,6 @@ const App: React.FC = () => {
                 </div>
                 <svg className="w-5 h-5 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7" /></svg>
               </button>
-              
               <div className="space-y-4">
                 <div className="flex justify-between font-bold"><span>উচ্চতা (পোর্ট্রেট)</span><span>{settings.heightPortrait.toFixed(0)}%</span></div>
                 <input type="range" min="70" max="150" value={settings.heightPortrait} onChange={(e) => setSettings({...settings, heightPortrait: parseInt(e.target.value)})} className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-teal-600" />
@@ -634,7 +643,6 @@ const App: React.FC = () => {
               {toggle('Enable Drag Resizing', settings.enableResizing, (v) => setSettings({...settings, enableResizing: v}))}
             </div>
           )}
-          {/* Other subpages omitted for brevity as they haven't changed */}
         </div>
       </div>
     );
@@ -683,15 +691,9 @@ const App: React.FC = () => {
                     <h2 className="text-2xl font-black font-bangla">টাইপিং গাইড</h2>
                     <button onClick={() => setIsHelpOpen(false)} className="p-3 bg-slate-100 dark:bg-slate-800 rounded-full"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M6 18L18 6M6 6l12 12" /></svg></button>
                 </header>
-                <div className="p-8 max-h-[70vh] overflow-y-auto custom-scrollbar font-inter space-y-6">
-                    <section><h3 className="font-bold text-blue-500 mb-2">Vowels (স্বরবর্ণ)</h3><p className="text-sm opacity-60">a=া, A=আ, i=ি, I=ঈ, u=ু, U=ঊ</p></section>
-                    <section><h3 className="font-bold text-blue-500 mb-2">Consonants (ব্যঞ্জনবর্ণ)</h3><p className="text-sm opacity-60">k=ক, kh=খ, g=গ, gh=ঘ, c=চ, ch=ছ</p></section>
-                </div>
             </div>
         </div>
       )}
-
-      {/* Emoji and Clipboard panels omitted for space, assuming they remain in full version */}
 
       <main className="w-full max-w-4xl h-full flex flex-col p-6 gap-6">
         <div className={`glass-panel rounded-[2.5rem] shadow-2xl border-t-2 border-blue-500/30 p-8 transition-all relative ${showDashboard ? 'flex-1' : 'h-40'}`}>
@@ -714,12 +716,17 @@ const App: React.FC = () => {
               )}
 
               <div className="flex items-center h-14 px-2 relative z-10 overflow-x-auto no-scrollbar gap-1 border-b dark:border-white/10 mb-2">
-                  <button onClick={() => setShowDashboard(true)} className="p-3 opacity-50 flex-shrink-0"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+                  <button onClick={() => setShowDashboard(true)} className="p-3 opacity-50 hover:opacity-100 flex-shrink-0"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 6h16M4 12h16M4 18h16"/></svg></button>
                   <div className="h-6 w-px bg-slate-200 dark:bg-white/10 mx-1 flex-shrink-0"></div>
                   <button onClick={() => setIsClipboardOpen(true)} className="p-3 opacity-60 flex-shrink-0">📋</button>
                   <button onClick={() => setIsNumericMode(!isNumericMode)} className={`p-3 text-[14px] font-black ${isNumericMode ? 'text-teal-500' : 'opacity-60'} flex-shrink-0`}>🔢</button>
                   <button onClick={speakText} className="p-3 opacity-60 flex-shrink-0">🔊</button>
                   <button onClick={() => setIsEmojiOpen(!isEmojiOpen)} className="p-3 opacity-50 flex-shrink-0">😊</button>
+                  {settings.voiceInputKey && (
+                    <button onClick={() => toggleVoiceInput()} className={`p-3 flex-shrink-0 ${isRecording ? 'text-red-500 animate-pulse' : 'opacity-50'}`}>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+                    </button>
+                  )}
               </div>
 
               <div className={`flex ${currentMode === 'split' ? 'gap-8' : 'flex-col gap-1'} relative z-10 flex-grow justify-end pb-4`}>
