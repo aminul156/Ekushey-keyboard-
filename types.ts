@@ -40,13 +40,12 @@ export interface AppSettings {
   theme: string;
   customThemeImage?: string; 
   customThemeBrightness?: number; 
-  showKeyBorder: boolean; // New: Toggle key borders/outlines
+  showKeyBorder: boolean;
   showSuggestions: boolean;
   showToolbar: boolean;
   physicalMapping: boolean;
   fontStyle: TypographyStyle;
   autoCorrect: boolean;
-  // Preferences
   autoCapitalization: boolean;
   doubleSpacePeriod: boolean;
   doubleSpaceTab: boolean;
@@ -61,7 +60,6 @@ export interface AppSettings {
   allowOtherKeyboards: boolean;
   moveCursorSpaceKey: boolean;
   volumeCursor: boolean;
-  // Appearance & Layout
   enableNumberRow: boolean;
   largeNumberRow: boolean;
   hideLongPressHints: boolean;
@@ -73,18 +71,17 @@ export interface AppSettings {
   enableSplitKeyboard: boolean;
   enableSplitFoldable: boolean;
   forcedEnterButton: boolean;
-  // Keyboard Mode
   portraitMode: KeyboardMode;
   landscapeMode: KeyboardMode;
   oneHandedSide: 'left' | 'right';
-  // Layout Options
   showFormatting: boolean;
   showComma: boolean;
   showPeriod: boolean;
-  // Size & Transparency
   kbSize: number;
+  kbWidth: number; // New: width control
+  posX: number; // New: horizontal position
+  posY: number; // New: vertical position
   kbTransparency: number;
-  // Advanced Settings
   keyPopupDismissDelay: string;
   vibrationDuration: string;
   soundVolume: string;
@@ -94,7 +91,6 @@ export interface AppSettings {
   emojiPhysicalKeyboard: boolean;
   showTypedWord: boolean;
   voiceTypingEngine: string;
-  // Smart Typing
   enableSmartTyping: boolean;
   smartGrammar: boolean;
   smartWritingStyle: boolean;
