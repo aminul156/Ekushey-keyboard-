@@ -42,8 +42,12 @@ export const getAIAssistance = async (text: string, task: AITask, options?: AIOp
       3. 2-3 common Synonyms.
       4. An example sentence.
       Format the output clearly using Markdown-like structure but keep it compact for a mobile-sized keyboard screen.`,
-    handwriting: `Recognize the handwritten characters in this image. The script is likely ${options?.language || 'English/Bangla/Arabic'}. 
-      Return ONLY the recognized text. If you see multiple words, return them as a string. Do not add any conversational filler.`,
+    handwriting: `You are an expert OCR and handwriting recognition engine. Analyze the provided image and extract the text. 
+      The handwritten script is in ${options?.language || 'Bengali, English, or Arabic'}. 
+      Return ONLY the recognized characters or words. Preserve spaces between words. 
+      Do NOT add any conversational filler, quotes, or explanations. 
+      If the text is in Bengali, use standard Unicode characters. 
+      If it is in Arabic, use standard Arabic script.`,
     emojiSearch: `You are an emoji search engine. Given the search query "${text}", return a string containing 30-40 relevant emojis. 
       Return ONLY the emojis with no spaces, text, or explanations. If no relevant emojis exist, return a few general popular ones.`
   };
@@ -70,7 +74,7 @@ export const getAIAssistance = async (text: string, task: AITask, options?: AIOp
       model: 'gemini-3-flash-preview',
       contents: contents,
       config: {
-        temperature: 0.4,
+        temperature: 0.2,
       }
     });
     return response.text || "";

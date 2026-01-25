@@ -51,7 +51,7 @@ const DEFAULT_SETTINGS: ExtendedAppSettings = {
   enableNumberRow: true,
   largeNumberRow: false,
   hideLongPressHints: false,
-  enableResizing: true,
+  enableResizing: false,
   heightPortrait: 100,
   heightLandscape: 100,
   oneHandedWidthPortrait: 85,
@@ -62,7 +62,7 @@ const DEFAULT_SETTINGS: ExtendedAppSettings = {
   portraitMode: 'standard',
   landscapeMode: 'standard',
   oneHandedSide: 'right',
-  showFormatting: false,
+  showFormatting: true,
   showComma: true,
   showPeriod: true,
   kbSize: 100,
@@ -77,7 +77,6 @@ const DEFAULT_SETTINGS: ExtendedAppSettings = {
   keyLongPressDelay: 300,
   spaceCursorLongPressDelay: 1000,
   spaceCursorSpeed: 150,
-  // Fixed: removed invalid 'boolean' type usage in object literal
   emojiPhysicalKeyboard: true,
   showTypedWord: true,
   voiceTypingEngine: 'Google Voice Typing',
@@ -92,6 +91,9 @@ const DEFAULT_SETTINGS: ExtendedAppSettings = {
   enableBanglaInNumberPad: true,
   oldStyleReph: false,
   autoVowelForming: true,
+  blockOffensiveWords: true,
+  personalizedSuggestions: true,
+  nextWordSuggestions: true,
   enabledLayouts: ALL_LAYOUTS
 };
 
@@ -100,9 +102,8 @@ interface ExtendedAppSettings extends AppSettings {
   soundProfile: string;
 }
 
-type SettingsView = 'main' | 'appearance' | 'preference' | 'layout' | 'mode' | 'smart' | 'advance';
+type SettingsView = 'main' | 'appearance' | 'preference' | 'layout' | 'mode' | 'smart' | 'advance' | 'textCorrection';
 
-// --- Handwriting Component ---
 const HandwritingCanvas: React.FC<{
   onClose: () => void;
   onRecognize: (base64: string) => void;
@@ -228,7 +229,7 @@ const HandwritingCanvas: React.FC<{
 };
 
 const App: React.FC = () => {
-  const [setupStep, setSetupStep] = useState<number>(1);
+  const [setupStep, setSetupStep] = useState<number>(0);
   const [showDashboard, setShowDashboard] = useState<boolean>(true);
   const [text, setText] = useState<string>('');
   const [layout, setLayout] = useState<KeyboardLayout>(KeyboardLayout.BANGLA_AVRO);
@@ -238,6 +239,8 @@ const App: React.FC = () => {
   const [isHandwritingMode, setIsHandwritingMode] = useState<boolean>(false);
   const [isQuickMatrixOpen, setIsQuickMatrixOpen] = useState<boolean>(false);
   const [isTranslateOpen, setIsTranslateOpen] = useState<boolean>(false);
+  const [isFormattingOpen, setIsFormattingOpen] = useState<boolean>(false);
+  const [isClipboardOpen, setIsClipboardOpen] = useState<boolean>(false);
   const [isRecognizing, setIsRecognizing] = useState<boolean>(false);
   const [isListening, setIsListening] = useState<boolean>(false);
   const [isResizingMode, setIsResizingMode] = useState<boolean>(false);
@@ -249,6 +252,8 @@ const App: React.FC = () => {
 
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [settingsView, setSettingsView] = useState<SettingsView>('main');
+  
+  const [clipboardHistory, setClipboardHistory] = useState<string[]>(["স্বাগতম", "ধন্যবাদ", "How are you?"]);
   
   const phoneticBuffer = useRef<string>('');
   const lastInsertedLen = useRef<number>(0);
@@ -359,6 +364,31 @@ const App: React.FC = () => {
     }, 0);
   };
 
+  const applyFormatting = (type: 'bold' | 'italic' | 'underline' | 'strike') => {
+    const el = textareaRef.current;
+    if (!el) return;
+    handleVibrate();
+    const start = el.selectionStart || 0;
+    const end = el.selectionEnd || 0;
+    const selection = text.substring(start, end);
+    
+    let formatted = "";
+    switch(type) {
+      case 'bold': formatted = `**${selection}**`; break;
+      case 'italic': formatted = `_${selection}_`; break;
+      case 'underline': formatted = `<u>${selection}</u>`; break;
+      case 'strike': formatted = `~~${selection}~~`; break;
+    }
+    
+    const newText = text.substring(0, start) + formatted + text.substring(end);
+    setText(newText);
+    setTimeout(() => {
+      const newCursorPos = start + formatted.length;
+      textareaRef.current?.setSelectionRange(newCursorPos, newCursorPos);
+      textareaRef.current?.focus();
+    }, 0);
+  };
+
   const getMappedChar = useCallback((key: string) => {
     if (isNumericMode) {
       if (!settings.enableBanglaInNumberPad) return key;
@@ -429,7 +459,10 @@ const App: React.FC = () => {
   const handleHandwritingRecognition = async (base64: string) => {
     setIsRecognizing(true);
     try {
-      const targetLang = layout === KeyboardLayout.ARABIC ? 'Arabic' : (layout === KeyboardLayout.ENGLISH ? 'English' : 'Bangla');
+      let targetLang = 'Bengali';
+      if (layout === KeyboardLayout.ENGLISH) targetLang = 'English';
+      else if (layout === KeyboardLayout.ARABIC) targetLang = 'Arabic';
+      
       const result = await getAIAssistance("", 'handwriting', { imageData: base64, language: targetLang });
       if (result) {
         insertChar(result);
@@ -458,6 +491,12 @@ const App: React.FC = () => {
     }
   };
 
+  const getQuickResponseLanguage = useCallback(() => {
+    if (layout === KeyboardLayout.ENGLISH) return 'en';
+    if (layout === KeyboardLayout.ARABIC || layout === KeyboardLayout.ARABIC_PHONETIC) return 'ar';
+    return 'bn';
+  }, [layout]);
+
   const toggleVoiceTyping = useCallback(() => {
     if (isListening) {
       if (recognitionRef.current) {
@@ -478,7 +517,10 @@ const App: React.FC = () => {
     recognition.continuous = false;
     recognition.interimResults = false;
 
-    recognition.onstart = () => setIsListening(true);
+    recognition.onstart = () => {
+      setIsListening(true);
+      handleVibrate();
+    };
     recognition.onend = () => setIsListening(false);
     recognition.onerror = () => setIsListening(false);
     
@@ -496,7 +538,7 @@ const App: React.FC = () => {
       console.error("Voice typing start error:", e);
       setIsListening(false);
     }
-  }, [isListening, layout, insertChar]);
+  }, [isListening, layout, insertChar, handleVibrate]);
 
   const onSpacePointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
     startX.current = e.clientX;
@@ -528,43 +570,42 @@ const App: React.FC = () => {
     e.currentTarget.releasePointerCapture(e.pointerId);
   };
 
-  const handleResizePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+  const onResizeStart = (e: React.PointerEvent) => {
     resizeStartY.current = e.clientY;
     resizeStartSize.current = settings.kbSize;
-    e.currentTarget.setPointerCapture(e.pointerId);
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
   };
 
-  const handleResizePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+  const onResizeMove = (e: React.PointerEvent) => {
     if (resizeStartY.current === null) return;
     const diffY = resizeStartY.current - e.clientY;
-    const newSize = Math.max(50, Math.min(150, resizeStartSize.current + (diffY / 2)));
+    const newSize = Math.max(70, Math.min(150, resizeStartSize.current + diffY / 2));
     setSettings(prev => ({ ...prev, kbSize: newSize }));
   };
 
-  const handleResizePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+  const onResizeEnd = (e: React.PointerEvent) => {
     resizeStartY.current = null;
-    e.currentTarget.releasePointerCapture(e.pointerId);
-  };
-
-  const handleCustomImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setSettings(prev => ({ ...prev, customThemeImage: reader.result as string }));
-      };
-      reader.readAsDataURL(file);
-    }
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
   };
 
   const renderSettings = () => {
-    const Toggle = ({ label, value, onChange }: { label: string, value: boolean, onChange: (v: boolean) => void }) => (
-      <div className="flex items-center justify-between p-4 bg-white dark:bg-slate-800 rounded-2xl border dark:border-white/5 shadow-sm">
-        <span className="font-bold text-slate-700 dark:text-slate-200">{label}</span>
-        <button onClick={() => onChange(!value)} className={`w-12 h-6 rounded-full relative transition-colors ${value ? 'bg-teal-500' : 'bg-slate-300'}`}>
-          <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-transform ${value ? 'translate-x-6' : 'translate-x-0.5'}`} />
-        </button>
+    const Toggle = ({ label, value, onChange, description }: { label: string, value: boolean, onChange: (v: boolean) => void, description?: string }) => (
+      <div className="flex flex-col gap-1 py-4 border-b border-slate-100 dark:border-white/5 last:border-0 group">
+        <div className="flex items-center justify-between px-6">
+          <span className="text-lg font-medium text-slate-800 dark:text-white">{label}</span>
+          <button onClick={() => onChange(!value)} className={`w-12 h-6 rounded-full relative transition-colors ${value ? 'bg-teal-500' : 'bg-slate-300'}`}>
+            <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-transform ${value ? 'translate-x-6' : 'translate-x-0.5'}`} />
+          </button>
+        </div>
+        {description && <p className="px-6 text-sm text-slate-400 dark:text-slate-500 leading-tight">{description}</p>}
       </div>
+    );
+
+    const SelectItem = ({ label, value, onClick }: { label: string, value: string | number, onClick: () => void }) => (
+      <button onClick={onClick} className="flex flex-col gap-1 py-4 px-6 border-b border-slate-100 dark:border-white/5 last:border-0 w-full text-left active:bg-slate-50 dark:active:bg-white/5 transition-colors">
+        <span className="text-lg font-medium text-slate-800 dark:text-white">{label}</span>
+        <span className="text-sm text-slate-400 dark:text-slate-500">{value}</span>
+      </button>
     );
 
     const RadioItem = ({ label, selected, onClick }: { label: string, selected: boolean, onClick: () => void }) => (
@@ -576,26 +617,73 @@ const App: React.FC = () => {
       </button>
     );
 
+    const ThemeCard: React.FC<{ theme: ThemeConfig }> = ({ theme }) => {
+      const isSelected = settings.theme === theme.id;
+      return (
+        <button 
+          onClick={() => { setSettings({...settings, theme: theme.id}); handleVibrate(); }}
+          className="flex flex-col gap-2 group"
+        >
+          <div className={`w-full aspect-video rounded-2xl overflow-hidden border-2 transition-all relative ${isSelected ? 'border-green-500' : 'border-transparent group-hover:border-slate-300'}`}>
+            <div className={`w-full h-full ${theme.bg} p-2 flex flex-col gap-1.5`}>
+              <div className="flex gap-1">
+                {[1,2,3,4,5,6].map(i => <div key={i} className={`h-2 flex-1 rounded-sm ${theme.keyBg} opacity-60`} />)}
+              </div>
+              <div className="flex gap-1 pl-2">
+                {[1,2,3,4,5].map(i => <div key={i} className={`h-2 flex-1 rounded-sm ${theme.keyBg} opacity-80`} />)}
+              </div>
+              <div className="flex gap-1 items-end mt-auto">
+                <div className={`h-3 w-4 rounded-sm ${theme.keyBg}`} />
+                <div className={`h-3 flex-1 rounded-sm ${theme.keyBg}`} />
+                <div className={`h-3 w-4 rounded-sm ${theme.accent}`} />
+              </div>
+            </div>
+            {isSelected && (
+              <div className="absolute bottom-2 right-2 w-6 h-6 bg-green-500 rounded-full flex items-center justify-center text-white text-xs shadow-lg">
+                ✓
+              </div>
+            )}
+          </div>
+          <span className={`text-sm font-bold truncate text-center w-full ${isSelected ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>
+            {theme.name}
+          </span>
+        </button>
+      );
+    };
+
     return (
-      <div className="fixed inset-0 z-[3000] bg-[#f2f2f2] dark:bg-slate-950 flex flex-col font-sans animate-in slide-in-from-right overflow-y-auto">
-        <header className="flex items-center gap-6 px-6 py-5 bg-[#f2f2f2] dark:bg-slate-900 sticky top-0 z-10">
-          <button onClick={() => settingsView === 'main' ? setIsSettingsOpen(false) : setSettingsView('main')} className="p-2 -ml-2 text-slate-800 dark:text-white text-2xl">
-            {settingsView === 'main' ? '✕' : '←'}
-          </button>
-          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">
-            {settingsView === 'mode' ? 'Keyboard mode' : 'সেটিংস'}
-          </h2>
+      <div className="fixed inset-0 z-[3000] bg-[#f2f2f2] dark:bg-slate-950 flex flex-col font-sans animate-in slide-in-from-right overflow-y-auto no-scrollbar">
+        <header className="flex items-center justify-between px-6 py-5 bg-[#f2f2f2] dark:bg-slate-900 sticky top-0 z-20 shadow-sm">
+          <div className="flex items-center gap-6">
+            <button onClick={() => settingsView === 'main' ? setIsSettingsOpen(false) : setSettingsView('main')} className="p-2 -ml-2 text-slate-800 dark:text-white text-2xl">
+              {settingsView === 'main' ? '✕' : '←'}
+            </button>
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-white">
+              {settingsView === 'appearance' ? 'Themes' : settingsView === 'mode' ? 'Keyboard mode' : settingsView === 'preference' ? 'পছন্দসমূহ' : settingsView === 'layout' ? 'Layout' : settingsView === 'advance' ? 'Advanced' : settingsView === 'textCorrection' ? 'Text correction' : 'সেটিংস'}
+            </h2>
+          </div>
+          {settingsView === 'appearance' && (
+            <button className="text-green-600 font-bold text-lg hover:opacity-80">Store</button>
+          )}
         </header>
 
         <div className="flex-1 w-full space-y-4 pb-20">
           {settingsView === 'main' && (
-            <div className="px-6 grid gap-3">
+            <div className="px-6 grid gap-3 pt-4">
               <button onClick={() => setSettingsView('appearance')} className="w-full flex items-center justify-between p-5 bg-white dark:bg-slate-800 rounded-2xl shadow-sm">
                 <div className="flex items-center gap-4"><span className="text-2xl">🎨</span><span className="font-black">চেহারা ও থিম (Themes)</span></div>
                 <span>➔</span>
               </button>
               <button onClick={() => setSettingsView('mode')} className="w-full flex items-center justify-between p-5 bg-white dark:bg-slate-800 rounded-2xl shadow-sm">
                 <div className="flex items-center gap-4"><span className="text-2xl">📱</span><span className="font-black">কীবোর্ড মোড (Keyboard Mode)</span></div>
+                <span>➔</span>
+              </button>
+              <button onClick={() => setSettingsView('layout')} className="w-full flex items-center justify-between p-5 bg-white dark:bg-slate-800 rounded-2xl shadow-sm">
+                <div className="flex items-center gap-4"><span className="text-2xl">⌨️</span><span className="font-black">লেআউট (Layout)</span></div>
+                <span>➔</span>
+              </button>
+              <button onClick={() => setSettingsView('textCorrection')} className="w-full flex items-center justify-between p-5 bg-white dark:bg-slate-800 rounded-2xl shadow-sm">
+                <div className="flex items-center gap-4"><span className="text-2xl">📝</span><span className="font-black">টেক্সট কারেকশন (Text correction)</span></div>
                 <span>➔</span>
               </button>
               <button onClick={() => setSettingsView('preference')} className="w-full flex items-center justify-between p-5 bg-white dark:bg-slate-800 rounded-2xl shadow-sm">
@@ -609,8 +697,297 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {settingsView === 'mode' && (
+          {settingsView === 'layout' && (
             <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
+              <div className="px-6 mb-6 pt-4">
+                <div className="bg-[#121212] rounded-xl p-3 shadow-inner overflow-hidden border border-black flex flex-col gap-2">
+                  <div className="flex justify-center gap-1">
+                    {['z', 'x', 'c', 'v', 'b', 'n', 'm'].map(k => (
+                      <div key={k} className="h-10 flex-1 bg-white/10 rounded-lg flex items-center justify-center text-white font-medium text-lg">{k}</div>
+                    ))}
+                    <div className="h-10 w-12 bg-white/10 rounded-lg flex items-center justify-center text-white">⌫</div>
+                  </div>
+                  <div className="flex justify-center gap-1">
+                    <div className="h-10 w-12 bg-white/10 rounded-lg flex items-center justify-center text-white text-xs">?123</div>
+                    <div className="h-10 w-10 bg-white/10 rounded-lg flex items-center justify-center text-white">🌐</div>
+                    <div className="h-10 w-8 bg-white/10 rounded-lg flex items-center justify-center text-white">,</div>
+                    <div className="h-10 flex-1 bg-white/10 rounded-lg flex items-center justify-center text-white font-bangla text-xs">অভ্র</div>
+                    <div className="h-10 w-8 bg-white/10 rounded-lg flex items-center justify-center text-white">.</div>
+                    <div className="h-10 w-12 bg-white/10 rounded-lg flex items-center justify-center text-white">⏎</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white dark:bg-slate-900 border-t border-b border-slate-100 dark:border-white/5 mb-6">
+                <SelectItem 
+                  label="কীবোর্ড সাইজ (Size)" 
+                  value="পরিবর্তন করতে ক্লিক করুন" 
+                  onClick={() => { setIsResizingMode(true); setIsSettingsOpen(false); }} 
+                />
+                <div className="px-6 py-4 border-b dark:border-white/5">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-lg font-medium text-slate-800 dark:text-white">স্বচ্ছতা (Transparency)</span>
+                    <span className="text-sm font-bold text-teal-600">{settings.kbTransparency}%</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="20" 
+                    max="100" 
+                    value={settings.kbTransparency} 
+                    onChange={(e) => setSettings({ ...settings, kbTransparency: parseInt(e.target.value) })}
+                    className="w-full h-2 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-teal-500"
+                  />
+                </div>
+                <Toggle 
+                  label="Text Format" 
+                  description="Show formatting options (B, I, U, S) in toolbar" 
+                  value={settings.showFormatting} 
+                  onChange={(v) => setSettings({...settings, showFormatting: v})} 
+                />
+                <Toggle 
+                  label="Keyboard Toolbar" 
+                  description="Show toolbar above the keyboard" 
+                  value={settings.showToolbar} 
+                  onChange={(v) => setSettings({...settings, showToolbar: v})} 
+                />
+                <Toggle 
+                  label="Number keys" 
+                  description="Show a row of number keys at the top" 
+                  value={settings.enableNumberRow} 
+                  onChange={(v) => setSettings({...settings, enableNumberRow: v})} 
+                />
+              </div>
+
+              <div className="mb-6">
+                <h3 className="px-6 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest bg-slate-100 dark:bg-slate-800">Spacebar Row</h3>
+                <div className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-white/5">
+                  <Toggle 
+                    label="Show Comma (,)" 
+                    value={settings.showComma} 
+                    onChange={(v) => setSettings({...settings, showComma: v})} 
+                  />
+                  <Toggle 
+                    label="Show Period (.)" 
+                    value={settings.showPeriod} 
+                    onChange={(v) => setSettings({...settings, showPeriod: v})} 
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {settingsView === 'textCorrection' && (
+            <div className="animate-in fade-in slide-in-from-bottom-4 duration-300 px-4 space-y-4 pt-4">
+              <div className="bg-white dark:bg-slate-900 rounded-2xl overflow-hidden shadow-sm">
+                <Toggle 
+                  label="Block offensive words" 
+                  description="Do not suggest potentially offensive words"
+                  value={settings.blockOffensiveWords} 
+                  onChange={(v) => setSettings({...settings, blockOffensiveWords: v})} 
+                />
+                <Toggle 
+                  label="Auto-correction" 
+                  description="Spacebar and punctuation automatically correct mistyped words"
+                  value={settings.autoCorrect} 
+                  onChange={(v) => setSettings({...settings, autoCorrect: v})} 
+                />
+                <Toggle 
+                  label="Show correction suggestions" 
+                  description="Display suggested words while typing"
+                  value={settings.showSuggestions} 
+                  onChange={(v) => setSettings({...settings, showSuggestions: v})} 
+                />
+                <Toggle 
+                  label="Personalized suggestions" 
+                  description="Learn from your communications and typed data to improve suggestions"
+                  value={settings.personalizedSuggestions} 
+                  onChange={(v) => setSettings({...settings, personalizedSuggestions: v})} 
+                />
+                <Toggle 
+                  label="Next-word suggestions" 
+                  description="Use the previous word in making suggestions"
+                  value={settings.nextWordSuggestions} 
+                  onChange={(v) => setSettings({...settings, nextWordSuggestions: v})} 
+                />
+              </div>
+            </div>
+          )}
+          
+          {settingsView === 'preference' && (
+            <div className="animate-in fade-in slide-in-from-bottom-4 duration-300 px-4 space-y-4 pt-4">
+              <div className="bg-white dark:bg-slate-900 rounded-2xl overflow-hidden shadow-sm">
+                <Toggle 
+                  label="Auto-capitalization" 
+                  description="Capitalize the first word of each sentence"
+                  value={settings.autoCapitalization} 
+                  onChange={(v) => setSettings({...settings, autoCapitalization: v})} 
+                />
+                <Toggle 
+                  label="Double-space period" 
+                  description="Double tap on spacebar inserts a period followed by a space"
+                  value={settings.doubleSpacePeriod} 
+                  onChange={(v) => setSettings({...settings, doubleSpacePeriod: v})} 
+                />
+                <Toggle 
+                  label="Double-space tab" 
+                  description="Double tap on spacebar inserts a tab"
+                  value={settings.doubleSpaceTab} 
+                  onChange={(v) => setSettings({...settings, doubleSpaceTab: v})} 
+                />
+                <Toggle 
+                  label="Clipboard Recent Items" 
+                  description="Show recent copied or cut text in clipboard"
+                  value={settings.clipboardRecentItems} 
+                  onChange={(v) => setSettings({...settings, clipboardRecentItems: v})} 
+                />
+                <Toggle 
+                  label="Show copied images on Clipboard" 
+                  description="Show screenshots or copied images on Clipboard"
+                  value={settings.showCopiedImages} 
+                  onChange={(v) => setSettings({...settings, showCopiedImages: v})} 
+                />
+                <Toggle 
+                  label="Vibrate on keypress" 
+                  value={settings.vibrateOnKeypress} 
+                  onChange={(v) => setSettings({...settings, vibrateOnKeypress: v})} 
+                />
+                <Toggle 
+                  label="Sound on keypress" 
+                  value={settings.soundOnKeypress} 
+                  onChange={(v) => setSettings({...settings, soundOnKeypress: v})} 
+                />
+                <Toggle 
+                  label="Popup on keypress" 
+                  value={settings.popupOnKeypress} 
+                  onChange={(v) => setSettings({...settings, popupOnKeypress: v})} 
+                />
+                <Toggle 
+                  label="Voice input key" 
+                  value={settings.voiceInputKey} 
+                  onChange={(v) => setSettings({...settings, voiceInputKey: v})} 
+                />
+                <Toggle 
+                  label="Show Emoji Key" 
+                  description="Switch to Emoji button"
+                  value={settings.showEmojiKey} 
+                  onChange={(v) => setSettings({...settings, showEmojiKey: v})} 
+                />
+              </div>
+
+              <div className="h-4"></div>
+
+              <div className="bg-white dark:bg-slate-900 rounded-2xl overflow-hidden shadow-sm">
+                <Toggle 
+                  label="Show Globe Key" 
+                  description="Switch keyboard language"
+                  value={settings.showGlobeKey} 
+                  onChange={(v) => setSettings({...settings, showGlobeKey: v})} 
+                />
+                <Toggle 
+                  label="Allow Other Keyboards" 
+                  description="Globe key switches to other keyboards also"
+                  value={settings.allowOtherKeyboards} 
+                  onChange={(v) => setSettings({...settings, allowOtherKeyboards: v})} 
+                />
+                <Toggle 
+                  label="Move Cursor Using Space Key" 
+                  description="Swipe space key to move cursor when globe key is enabled"
+                  value={settings.moveCursorSpaceKey} 
+                  onChange={(v) => setSettings({...settings, moveCursorSpaceKey: v})} 
+                />
+                <Toggle 
+                  label="Volume cursor" 
+                  description="Use the volume keys to move the cursor"
+                  value={settings.volumeCursor} 
+                  onChange={(v) => setSettings({...settings, volumeCursor: v})} 
+                />
+              </div>
+            </div>
+          )}
+
+          {settingsView === 'advance' && (
+            <div className="animate-in fade-in slide-in-from-bottom-4 duration-300 space-y-0 bg-white dark:bg-slate-900 rounded-2xl overflow-hidden shadow-sm mx-4 mt-4">
+              <SelectItem 
+                label="Key popup dismiss delay" 
+                value={settings.keyPopupDismissDelay} 
+                onClick={() => {}} 
+              />
+              <SelectItem 
+                label="Keypress vibration duration" 
+                value={settings.vibrationDuration === '10ms' ? 'System default' : settings.vibrationDuration} 
+                onClick={() => {}} 
+              />
+              <SelectItem 
+                label="Keypress sound volume" 
+                value={settings.soundVolume === '50' ? 'System default' : settings.soundVolume} 
+                onClick={() => {}} 
+              />
+              <SelectItem 
+                label="Key long press delay" 
+                value={`${settings.keyLongPressDelay}ms`} 
+                onClick={() => {}} 
+              />
+              <SelectItem 
+                label="Space cursor long press delay" 
+                value={`${settings.spaceCursorLongPressDelay}ms`} 
+                onClick={() => {}} 
+              />
+              <SelectItem 
+                label="Space cursor speed" 
+                value={settings.spaceCursorSpeed} 
+                onClick={() => {}} 
+              />
+              <Toggle 
+                label="Emoji for physical keyboard" 
+                description="Physical Alt key shows the emoji palette"
+                value={settings.emojiPhysicalKeyboard} 
+                onChange={(v) => setSettings({...settings, emojiPhysicalKeyboard: v})} 
+              />
+              <Toggle 
+                label="Show typed word" 
+                description="Show typed word as the first suggestion in phonetic mode"
+                value={settings.showTypedWord} 
+                onChange={(v) => setSettings({...settings, showTypedWord: v})} 
+              />
+              <SelectItem 
+                label="Voice typing engine" 
+                value={settings.voiceInputKey ? "Enabled" : "Disabled"} 
+                onClick={() => {}} 
+              />
+            </div>
+          )}
+
+          {settingsView === 'appearance' && (
+            <div className="animate-in fade-in slide-in-from-bottom-4 duration-300 px-6 pb-10 pt-4">
+              <div className="mb-10">
+                <h3 className="text-lg font-bold text-slate-500 mb-6 font-bangla"> ঈদ-উল-আজহা ২০২৪ (১)</h3>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-8">
+                  {KEYBOARD_THEMES.filter(t => t.category === 'eid').map(t => (
+                    <ThemeCard key={t.id} theme={t} />
+                  ))}
+                </div>
+              </div>
+              <div className="mb-10">
+                <h3 className="text-lg font-bold text-slate-500 mb-6 font-bangla">কালার থিম</h3>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-8">
+                  {KEYBOARD_THEMES.filter(t => t.category === 'color').map(t => (
+                    <ThemeCard key={t.id} theme={t} />
+                  ))}
+                </div>
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-500 mb-6 font-bangla">আরও থিম</h3>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-8">
+                  {KEYBOARD_THEMES.filter(t => !t.category).map(t => (
+                    <ThemeCard key={t.id} theme={t} />
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {settingsView === 'mode' && (
+            <div className="animate-in fade-in slide-in-from-bottom-4 duration-300 pt-4">
               <div className="px-6 space-y-8">
                 <div>
                   <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest px-1 mb-4">Portrait View</h3>
@@ -656,187 +1033,17 @@ const App: React.FC = () => {
               </div>
             </div>
           )}
-
-          {settingsView === 'appearance' && (
-            <div className="px-6 space-y-6">
-               <div className="p-5 bg-white dark:bg-slate-800 rounded-[2rem] shadow-sm">
-                 <h3 className="font-black text-xs text-slate-400 uppercase mb-5 tracking-widest px-1">উপলব্ধ থিমসমূহ (Themes)</h3>
-                 <div className="grid grid-cols-2 gap-4">
-                   {KEYBOARD_THEMES.map(t => (
-                     <button 
-                        key={t.id} 
-                        onClick={() => {
-                          setSettings({...settings, theme: t.id});
-                          handleVibrate();
-                          playClickSound();
-                        }} 
-                        className={`group relative p-3 rounded-[1.5rem] border-2 transition-all duration-300 ${settings.theme === t.id ? 'border-teal-500 bg-teal-50/50 dark:bg-teal-900/20 scale-105 shadow-md' : 'border-slate-100 dark:border-white/5 hover:border-slate-200'}`}
-                     >
-                       <div className="flex flex-col gap-3">
-                         <div className={`h-16 w-full rounded-2xl ${t.bg} shadow-inner border border-black/5 overflow-hidden flex flex-col justify-end p-1 gap-1`}>
-                            <div className="flex gap-1">
-                                <div className={`h-4 flex-1 rounded-md ${t.keyBg} shadow-sm border border-black/5 opacity-80`}></div>
-                                <div className={`h-4 flex-1 rounded-md ${t.keyBg} shadow-sm border border-black/5 opacity-80`}></div>
-                                <div className={`h-4 flex-1 rounded-md ${t.keyBg} shadow-sm border border-black/5 opacity-80`}></div>
-                            </div>
-                            <div className={`h-5 w-full rounded-md ${t.accent} shadow-sm opacity-90`}></div>
-                         </div>
-                         <span className={`text-[11px] font-black truncate text-center ${settings.theme === t.id ? 'text-teal-600 dark:text-teal-400' : 'text-slate-500'}`}>{t.name}</span>
-                       </div>
-                       {settings.theme === t.id && (
-                         <div className="absolute -top-1 -right-1 w-6 h-6 bg-teal-500 rounded-full flex items-center justify-center shadow-lg animate-in zoom-in">
-                           <span className="text-[12px] text-white font-bold">✓</span>
-                         </div>
-                       )}
-                     </button>
-                   ))}
-                 </div>
-               </div>
-
-               <div className="p-5 bg-white dark:bg-slate-800 rounded-[2rem] space-y-4 shadow-sm">
-                 <h3 className="font-black text-xs text-slate-400 uppercase mb-2 tracking-widest px-1">কাস্টম ব্যাকগ্রাউন্ড</h3>
-                 <div className="flex flex-col gap-3">
-                    <div className="flex items-center gap-3">
-                        <label className="flex-1 cursor-pointer py-4 bg-teal-500 text-white rounded-2xl text-center font-black shadow-lg active:scale-95 transition-transform flex items-center justify-center gap-2">
-                            🖼️ ইমেজ আপলোড করুন
-                            <input type="file" accept="image/*" className="hidden" onChange={handleCustomImageUpload} />
-                        </label>
-                        {settings.customThemeImage && (
-                            <button onClick={() => setSettings({...settings, customThemeImage: undefined})} className="px-5 py-4 bg-red-100 text-red-600 rounded-2xl font-black shadow-sm active:scale-95">✕</button>
-                        )}
-                    </div>
-                    {settings.customThemeImage && (
-                        <div className="space-y-3 pt-2">
-                            <label className="text-xs font-black text-slate-500 flex justify-between">
-                                <span>ব্রাইটনেস (Brightness)</span>
-                                <span>{settings.customThemeBrightness}%</span>
-                            </label>
-                            <input type="range" min="0" max="100" value={settings.customThemeBrightness} onChange={e => setSettings({...settings, customThemeBrightness: parseInt(e.target.value)})} className="w-full accent-teal-500" />
-                        </div>
-                    )}
-                 </div>
-               </div>
-
-               <div className="space-y-4">
-                    <div className="p-5 bg-white dark:bg-slate-800 rounded-[2rem] shadow-sm">
-                        <label className="font-black text-xs text-slate-400 block mb-4 uppercase tracking-widest flex justify-between">
-                            <span>কীবোর্ড সাইজ (Keyboard Size)</span>
-                            <span>{Math.round(settings.kbSize)}%</span>
-                        </label>
-                        <input type="range" min="50" max="150" value={settings.kbSize} onChange={e => setSettings({...settings, kbSize: parseInt(e.target.value)})} className="w-full accent-teal-500" />
-                        <button 
-                          onClick={() => { setIsSettingsOpen(false); setIsResizingMode(true); }}
-                          className="mt-4 w-full py-3 bg-teal-500/10 dark:bg-teal-500/20 text-teal-600 dark:text-teal-400 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-teal-500/20 transition-colors border border-teal-500/20"
-                        >
-                          ম্যানুয়ালি রিসাইজ করুন (Resize with Handle)
-                        </button>
-                    </div>
-
-                    <div className="p-5 bg-white dark:bg-slate-800 rounded-[2rem] shadow-sm">
-                        <label className="font-black text-xs text-slate-400 block mb-4 uppercase tracking-widest flex justify-between">
-                            <span>স্বচ্ছতা (Transparency)</span>
-                            <span>{settings.kbTransparency}%</span>
-                        </label>
-                        <input type="range" min="20" max="100" value={settings.kbTransparency} onChange={e => setSettings({...settings, kbTransparency: parseInt(e.target.value)})} className="w-full accent-teal-500" />
-                    </div>
-
-                    <div className="p-5 bg-white dark:bg-slate-800 rounded-[2rem] shadow-sm">
-                        <label className="font-black text-xs text-slate-400 block mb-4 uppercase tracking-widest flex justify-between">
-                            <span>ফন্ট সাইজ (Font Size)</span>
-                            <span>{settings.fontSize}px</span>
-                        </label>
-                        <input type="range" min="12" max="32" value={settings.fontSize} onChange={e => setSettings({...settings, fontSize: parseInt(e.target.value)})} className="w-full accent-teal-500" />
-                    </div>
-                    <Toggle label="কী-বোর্ড বর্ডার দেখান (Key Borders)" value={settings.showKeyBorder} onChange={v => setSettings({...settings, showKeyBorder: v})} />
-               </div>
-            </div>
-          )}
-
-          {settingsView === 'preference' && (
-            <div className="px-6 space-y-4">
-               <div className="p-5 bg-white dark:bg-slate-800 rounded-[2rem] space-y-4">
-                  <h3 className="font-black text-slate-400 text-xs uppercase mb-2 tracking-widest">ভাইব্রেশন ও সাউন্ড</h3>
-                  <Toggle label="ভাইব্রেশন (Vibration)" value={settings.vibrateOnKeypress} onChange={v => setSettings({...settings, vibrateOnKeypress: v})} />
-                  
-                  {settings.vibrateOnKeypress && (
-                    <div className="space-y-4 pt-2 animate-in fade-in slide-in-from-top-2">
-                       <label className="text-xs font-black text-slate-500 uppercase tracking-widest px-1">ভাইব্রেশনের তীব্রতা (Intensity)</label>
-                       <div className="grid grid-cols-3 gap-2">
-                          {[
-                            { id: '10ms', label: 'Low' },
-                            { id: '25ms', label: 'Medium' },
-                            { id: '50ms', label: 'High' }
-                          ].map(opt => (
-                            <button 
-                              key={opt.id}
-                              onClick={() => { setSettings({...settings, vibrationDuration: opt.id}); handleVibrate(); }}
-                              className={`py-3 rounded-xl text-xs font-black transition-all ${settings.vibrationDuration === opt.id ? 'bg-teal-500 text-white shadow-md' : 'bg-slate-100 dark:bg-white/5 text-slate-600 dark:text-slate-400'}`}
-                            >
-                              {opt.label}
-                            </button>
-                          ))}
-                       </div>
-                    </div>
-                  )}
-
-                  <Toggle label="কী-প্রেস সাউন্ড (Sound on keypress)" value={settings.soundOnKeypress} onChange={v => setSettings({...settings, soundOnKeypress: v})} />
-                  {settings.soundOnKeypress && (
-                    <div className="space-y-6 pt-2 animate-in fade-in slide-in-from-top-2">
-                       <div className="space-y-3">
-                          <label className="text-xs font-black text-slate-500 uppercase tracking-widest">সাউন্ড প্রোফাইল (Profiles)</label>
-                          <div className="grid grid-cols-2 gap-2">
-                             {['Click', 'Tink', 'Bubble', 'Mechanical'].map(p => (
-                               <button 
-                                 key={p} 
-                                 onClick={() => { setSettings({...settings, soundProfile: p}); playClickSound(); }}
-                                 className={`py-3 rounded-xl text-xs font-black transition-all ${settings.soundProfile === p ? 'bg-teal-500 text-white shadow-md' : 'bg-slate-100 dark:bg-white/5 text-slate-600 dark:text-slate-400'}`}
-                               >
-                                 {p === 'Click' ? 'Default Click' : p}
-                               </button>
-                             ))}
-                          </div>
-                       </div>
-                       <div className="space-y-3">
-                          <label className="text-xs font-black text-slate-500 flex justify-between uppercase tracking-widest">
-                             <span>সাউন্ড ভলিউম (Volume)</span>
-                             <span>{settings.soundVolume}%</span>
-                          </label>
-                          <input type="range" min="0" max="100" value={settings.soundVolume} onChange={e => setSettings({...settings, soundVolume: e.target.value})} className="w-full accent-teal-500" />
-                       </div>
-                    </div>
-                  )}
-               </div>
-
-               <div className="p-5 bg-white dark:bg-slate-800 rounded-[2rem] space-y-4">
-                  <h3 className="font-black text-slate-400 text-xs uppercase mb-2 tracking-widest">টাইপিং পছন্দ</h3>
-                  <Toggle label="অটো ক্যাপিটালাইজেশন (Auto-Capitalization)" value={settings.autoCapitalization} onChange={v => setSettings({...settings, autoCapitalization: v})} />
-               </div>
-            </div>
-          )}
-
-          {settingsView === 'advance' && (
-            <div className="px-6 space-y-3">
-               <div className="p-5 bg-teal-50 rounded-[2rem] space-y-3 border border-teal-100">
-                  <h3 className="font-black text-teal-600 text-[10px] uppercase mb-4 tracking-widest">অভ্র সেটিংস (Avro)</h3>
-                  <Toggle label="পুরাতন নিয়মে রেফ" value={settings.oldStyleReph} onChange={v => setSettings({...settings, oldStyleReph: v})} />
-                  <Toggle label="স্বয়ংক্রিয় স্বরবর্ণ গঠন" value={settings.autoVowelForming} onChange={v => setSettings({...settings, autoVowelForming: v})} />
-               </div>
-            </div>
-          )}
         </div>
       </div>
     );
   };
 
   const isRTL = layout === KeyboardLayout.ARABIC;
-
-  // Layout Logic Helpers
   const currentMode = isLandscape ? settings.landscapeMode : settings.portraitMode;
   const isSplit = isLandscape && currentMode === 'split';
   const isOneHanded = !isLandscape && currentMode === 'one-handed';
   const isFloating = currentMode === 'floating';
 
-  // Compute Custom Styles
   const kbContainerStyle: React.CSSProperties = {
     opacity: settings.kbTransparency / 100,
     position: isFloating ? 'fixed' : 'relative',
@@ -848,106 +1055,11 @@ const App: React.FC = () => {
     marginRight: isOneHanded ? (settings.oneHandedSide === 'left' ? 'auto' : '0') : 'auto',
     overflow: 'hidden',
     height: `${settings.kbSize * 2.8}px`,
-    transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+    transition: 'all 0.1s ease-out',
     zIndex: isFloating ? 2000 : 10,
     boxShadow: isFloating ? '0 25px 50px -12px rgba(0, 0, 0, 0.5)' : 'none',
     border: isFloating ? '2px solid rgba(255,255,255,0.1)' : 'none'
   };
-
-  const kbBackgroundStyle: React.CSSProperties = settings.customThemeImage ? {
-    backgroundImage: `url(${settings.customThemeImage})`,
-    backgroundSize: 'cover',
-    backgroundPosition: 'center',
-    position: 'absolute',
-    inset: 0,
-    zIndex: -1
-  } : {};
-
-  const kbOverlayStyle: React.CSSProperties = settings.customThemeImage ? {
-    position: 'absolute',
-    inset: 0,
-    backgroundColor: 'black',
-    opacity: (100 - (settings.customThemeBrightness || 70)) / 100,
-    zIndex: 0
-  } : {};
-
-  const getQuickResponseLanguage = () => {
-    if (layout === KeyboardLayout.ARABIC) return 'ar';
-    if (layout === KeyboardLayout.ENGLISH) return 'en';
-    return 'bn';
-  };
-
-  if (!settings.isSetupComplete) {
-    const steps = [
-      null,
-      { title: 'বাংলা লেখার পদ্ধতি পছন্দ করুন', desc: 'আপনার পছন্দের বাংলা লে-আউট নির্বাচন করুন।', content: (
-        <div className="space-y-3 mt-6">
-          {[
-            { id: KeyboardLayout.BANGLA_AVRO, name: 'অভ্র (Phonetic)' },
-            { id: KeyboardLayout.BANGLA_JATIYO, name: 'জাতীয় (Jatiyo)' },
-            { id: KeyboardLayout.BANGLA_UNIBIJOY, name: 'ইউনিবিজয় (UniBijoy)' },
-            { id: KeyboardLayout.ARABIC, name: 'আরবি (Arabic)' }
-          ].map((l) => (
-            <label key={l.id} className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-100">
-              <input type="checkbox" defaultChecked className="w-6 h-6 accent-teal-600" />
-              <span className="font-bold">{l.name}</span>
-            </label>
-          ))}
-        </div>
-      )},
-      { title: 'কী-বোর্ড অন করুন', desc: 'সেটিংসে গিয়ে একুশে কীবোর্ড অন করুন।', content: (
-        <button className="mt-8 w-full py-5 bg-teal-50 shadow-sm border border-teal-100 rounded-3xl text-teal-600 font-bold">🌐 সেটিংস অন করুন</button>
-      )},
-      { title: 'কী-বোর্ড সুইচ করুন', desc: 'একুশে বাংলা কীবোর্ড নির্বাচন করুন।', content: (
-        <button className="mt-8 w-full py-5 bg-blue-50 shadow-sm border border-blue-100 rounded-3xl text-blue-600 font-bold">🔄 কীবোর্ড পরিবর্তন করুন</button>
-      )},
-      { title: 'ভাষা পরিবর্তনের অতিরিক্ত বাটন', desc: 'স্পেস বার বা গ্লোব আইকন দিয়ে ভাষা পরিবর্তন করুন।', content: (
-        <div className="p-4 bg-slate-50 rounded-2xl mt-6">
-          <div className="flex items-center justify-between mb-2">
-            <span className="font-bold">অতিরিক্ত বাটন ব্যবহার করুন</span>
-            <input type="checkbox" defaultChecked className="w-6 h-6 accent-teal-600" />
-          </div>
-          <p className="text-[10px] text-teal-600 font-bold italic">টিপস: স্পেস বারে সোয়াইপ করে ভাষা পরিবর্তন করা যায়।</p>
-        </div>
-      )},
-      { title: 'কিবোর্ডের উচ্চতা', desc: 'কিবোর্ডের উচ্চতা ঠিক করুন', content: (
-        <div className="mt-8"><input type="range" className="w-full accent-teal-600" /></div>
-      )},
-      { title: 'নম্বর সারি', desc: 'নম্বর সারিটি কিবোর্ডে যুক্ত হবে', content: (
-        <label className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl mt-6">
-          <span className="font-bold">নম্বর সারি যুক্ত করুন</span>
-          <input type="checkbox" defaultChecked className="w-6 h-6 accent-teal-600" />
-        </label>
-      )},
-      { title: 'অভিনন্দন আপনি পুরোপুরি প্রস্তুত', desc: 'আপনার কীবোর্ড সেটআপ সম্পন্ন হয়েছে।', content: (
-        <div className="space-y-3 mt-8">
-           <button onClick={() => setSettings({...settings, isSetupComplete: true})} className="w-full py-4 text-blue-600 font-bold text-left">সেট আপ শেষ করুন</button>
-        </div>
-      )}
-    ];
-
-    const current = steps[setupStep];
-    if (!current) return null;
-
-    return (
-      <div className="min-h-screen bg-slate-100 flex flex-col p-6 font-bangla">
-        <header className="mb-10 pt-4">
-          <h1 className="text-4xl font-black text-slate-400">একুশে বাংলা কীবোর্ড <br/><span className="text-slate-700">সেট আপ</span></h1>
-          <div className="flex justify-between px-2 mt-8">
-            {[1, 2, 3, 4, 5, 6].map(i => (
-              <span key={i} className={`text-lg font-bold ${setupStep === i ? 'text-teal-600' : 'text-slate-300'}`}>{NUMERALS.bn[i-1]}</span>
-            ))}
-          </div>
-        </header>
-        <div className="bg-white rounded-[2rem] p-10 shadow-sm flex-1 relative">
-          <h2 className="text-2xl font-black mb-4 text-slate-800">{current.title}</h2>
-          <p className="text-slate-500 font-medium">{current.desc}</p>
-          {current.content}
-          {setupStep < 7 && <button onClick={() => setSetupStep(setupStep + 1)} className="absolute bottom-10 left-10 text-blue-600 font-black text-xl">পরের ধাপে যান</button>}
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className={`min-h-screen ${activeTheme.isDark ? 'bg-black' : 'bg-slate-50'} flex flex-col items-center relative overflow-hidden transition-colors`}>
@@ -977,236 +1089,155 @@ const App: React.FC = () => {
                   { label: 'সম্পর্কে', onClick: () => {} },
                   { label: 'বের হোন', onClick: () => window.close(), dark: true }
                 ].map(item => (
-                  <button key={item.label} onClick={item.onClick} className={`p-6 rounded-xl flex flex-col items-center justify-center font-black text-xl shadow-lg active:scale-95 ${item.dark ? 'bg-[#2a2a2a] text-white' : 'bg-white text-slate-800 border'}`}>
+                  <button key={item.label} onClick={item.onClick} className={`p-6 rounded-xl flex flex-col items-center justify-center font-black text-xl shadow-lg active:scale-95 transition-all ${item.dark ? 'bg-[#2a2a2a] text-white hover:bg-[#333]' : 'bg-white text-slate-800 border hover:bg-slate-50'}`}>
                     {item.label}
                   </button>
                 ))}
                 <div className="col-span-2 mt-4 flex justify-between h-14 items-center px-2">
-                   {['😀', '🖼️', '🕒', '+'].map(s => <button key={s} className="text-white text-3xl opacity-60">{s}</button>)}
-                   <button className="text-teal-400 font-black text-xl">a>z</button>
-                   <button className="text-white text-3xl opacity-60">🎤</button>
-                   <button className="text-pink-500 text-3xl">🔊</button>
-                   <button className="text-yellow-400 text-3xl">⭐</button>
-                   <button onClick={() => { setSettingsView('main'); setIsSettingsOpen(true); }} className="text-white text-3xl">⚙️</button>
+                   {['😀', '🖼️', '🕒', '+'].map(s => <button key={s} className="text-white text-3xl opacity-60 hover:opacity-100">{s}</button>)}
+                   <button className="text-teal-400 font-black text-xl hover:scale-110 transition-transform">a>z</button>
+                   <button onClick={toggleVoiceTyping} className={`text-white text-3xl transition-all hover:opacity-100 ${isListening ? 'text-red-500 scale-125 animate-pulse drop-shadow-[0_0_8px_rgba(239,68,68,0.6)]' : 'opacity-60'}`}>🎤</button>
+                   <button className="text-pink-500 text-3xl hover:scale-110">🔊</button>
+                   <button className="text-yellow-400 text-3xl hover:scale-110">⭐</button>
+                   <button onClick={() => { setSettingsView('main'); setIsSettingsOpen(true); }} className="text-white text-3xl hover:opacity-100">⚙️</button>
                 </div>
-                <button onClick={() => { setShowDashboard(false); setTimeout(() => textareaRef.current?.focus(), 100); }} className="col-span-2 bg-[#1e40af] p-6 rounded-2xl text-white font-black text-2xl uppercase">Keyboard Mode</button>
+                <button onClick={() => { setShowDashboard(false); setTimeout(() => textareaRef.current?.focus(), 100); }} className="col-span-2 bg-[#1e40af] p-6 rounded-2xl text-white font-black text-2xl uppercase shadow-xl hover:bg-blue-700 active:scale-95 transition-all">Keyboard Mode</button>
              </div>
           </div>
         ) : (
-          <div 
-            style={kbContainerStyle}
-            className={`rounded-[2rem] p-4 shadow-2xl ${settings.customThemeImage ? '' : activeTheme.bg} animate-in slide-in-from-bottom w-full flex flex-col`}
-          >
-              <div style={kbBackgroundStyle}></div>
-              <div style={kbOverlayStyle}></div>
-
+          <div className="relative w-full">
+            {isResizingMode && (
+              <div className="absolute -top-12 left-0 right-0 z-[2000] flex justify-between items-center px-2 animate-in slide-in-from-bottom-2">
+                <div className="bg-teal-500 text-white px-4 py-2 rounded-full text-xs font-black shadow-lg">সাইজ পরিবর্তন করুন</div>
+                <button 
+                  onClick={() => setIsResizingMode(false)}
+                  className="bg-white text-slate-900 px-6 py-2 rounded-full text-xs font-black shadow-lg hover:bg-slate-100 transition-colors"
+                >
+                  ঠিক আছে
+                </button>
+              </div>
+            )}
+            
+            <div 
+              style={kbContainerStyle}
+              className={`rounded-[2rem] p-4 shadow-2xl ${activeTheme.bg} animate-in slide-in-from-bottom w-full flex flex-col transition-all duration-300 relative group`}
+            >
               {isResizingMode && (
-                <div className="absolute inset-0 bg-black/40 backdrop-blur-sm z-[200] flex flex-col items-center justify-center p-6 text-center">
-                  <div 
-                    onPointerDown={handleResizePointerDown}
-                    onPointerMove={handleResizePointerMove}
-                    onPointerUp={handleResizePointerUp}
-                    className="w-full py-12 mb-4 bg-teal-500/20 border-4 border-teal-500 border-dashed rounded-[3rem] flex flex-col items-center justify-center gap-4 cursor-ns-resize active:bg-teal-500/40 transition-all group"
-                  >
-                    <div className="w-16 h-16 bg-teal-500 rounded-full flex items-center justify-center text-white text-3xl shadow-[0_0_20px_rgba(20,184,166,0.6)] group-active:scale-110 transition-transform">
-                      ↕️
-                    </div>
-                    <span className="text-white font-black uppercase text-sm tracking-[0.2em]">সাইজ পরিবর্তন করতে টানুন</span>
-                  </div>
-                  <button 
-                    onClick={() => setIsResizingMode(false)}
-                    className="py-4 px-12 bg-white text-slate-900 rounded-2xl font-black shadow-2xl active:scale-95 transition-transform border-b-4 border-slate-300"
-                  >
-                    সেভ করুন (Done)
-                  </button>
+                <div 
+                  onPointerDown={onResizeStart}
+                  onPointerMove={onResizeMove}
+                  onPointerUp={onResizeEnd}
+                  className="absolute -top-1 left-0 right-0 h-6 cursor-ns-resize flex items-center justify-center z-50 group-hover:bg-white/5 transition-colors"
+                >
+                  <div className="w-12 h-1.5 bg-teal-500 rounded-full shadow-[0_0_10px_rgba(45,212,191,0.5)]"></div>
                 </div>
               )}
-              
-              <div className={`flex items-center h-12 px-2 gap-2 border-b relative z-10 ${activeTheme.isDark ? 'border-white/10' : 'border-black/5'} mb-2 shrink-0`}>
+
+              <div className={`flex items-center h-12 px-2 gap-1 border-b relative z-10 ${activeTheme.isDark ? 'border-white/10' : 'border-black/5'} mb-2 shrink-0 overflow-x-auto no-scrollbar`}>
                   <button onClick={() => setShowDashboard(true)} className="p-2 opacity-60 text-white hover:opacity-100">🏠</button>
-                  <button onClick={() => setIsNumericMode(!isNumericMode)} className="p-2 font-black opacity-60 text-white hover:opacity-100">123</button>
-                  <button onClick={() => cycleLayout('next')} className="p-2 opacity-60 text-white hover:opacity-100">🌐</button>
-                  
-                  <button 
-                    onClick={() => { setIsHandwritingMode(!isHandwritingMode); setIsQuickMatrixOpen(false); setIsTranslateOpen(false); }} 
-                    className={`p-2 px-3 flex items-center gap-2 transition-all rounded-xl ${isHandwritingMode ? 'bg-teal-500 opacity-100 text-white shadow-lg' : 'opacity-60 text-white hover:opacity-100'}`}
-                  >
+                  <button onClick={() => setIsNumericMode(!isNumericMode)} className="p-2 font-black opacity-60 text-white hover:opacity-100 shrink-0">123</button>
+                  <button onClick={() => cycleLayout('next')} className="p-2 opacity-60 text-white hover:opacity-100 shrink-0">🌐</button>
+                  <button onClick={() => { setIsHandwritingMode(!isHandwritingMode); setIsQuickMatrixOpen(false); setIsTranslateOpen(false); setIsFormattingOpen(false); setIsClipboardOpen(false); }} className={`p-2 px-3 flex items-center gap-2 transition-all rounded-xl shrink-0 ${isHandwritingMode ? 'bg-teal-500 opacity-100 text-white shadow-lg' : 'opacity-60 text-white hover:opacity-100'}`}>
                     <span className="text-xl">✍️</span>
-                    {isHandwritingMode && <span className="text-xs font-black uppercase">Handwriting</span>}
                   </button>
-
-                  <button 
-                    onClick={() => { setIsQuickMatrixOpen(!isQuickMatrixOpen); setIsHandwritingMode(false); setIsTranslateOpen(false); }} 
-                    className={`p-2 px-3 flex items-center gap-2 transition-all rounded-xl ${isQuickMatrixOpen ? 'bg-indigo-500 opacity-100 text-white shadow-lg' : 'opacity-60 text-white hover:opacity-100'}`}
-                  >
-                    <span className="text-xl">⚡</span>
-                    {isQuickMatrixOpen && <span className="text-xs font-black uppercase">Matrix</span>}
+                  <button onClick={() => { setIsClipboardOpen(!isClipboardOpen); setIsHandwritingMode(false); setIsQuickMatrixOpen(false); setIsTranslateOpen(false); setIsFormattingOpen(false); }} className={`p-2 px-3 flex items-center gap-2 transition-all rounded-xl shrink-0 ${isClipboardOpen ? 'bg-blue-600 opacity-100 text-white shadow-lg' : 'opacity-60 text-white hover:opacity-100'}`}>
+                    <span className="text-xl">📋</span>
                   </button>
-
-                  <button 
-                    onClick={() => { setIsTranslateOpen(!isTranslateOpen); setIsHandwritingMode(false); setIsQuickMatrixOpen(false); }} 
-                    className={`p-2 px-3 flex items-center gap-2 transition-all rounded-xl ${isTranslateOpen ? 'bg-orange-500 opacity-100 text-white shadow-lg' : 'opacity-60 text-white hover:opacity-100'}`}
-                  >
-                    <span className="text-xl">🌍</span>
-                    {isTranslateOpen && <span className="text-xs font-black uppercase">Translate</span>}
-                  </button>
-                  
-                  <button onClick={toggleVoiceTyping} className={`p-2 opacity-60 text-white transition-all hover:opacity-100 ${isListening ? 'bg-red-500 rounded-lg opacity-100 animate-pulse shadow-lg' : ''}`}>🎤</button>
-                  <button onClick={() => { setSettingsView('main'); setIsSettingsOpen(true); }} className="p-2 opacity-60 ml-auto text-white hover:opacity-100">⚙️</button>
+                  <button onClick={() => { setIsQuickMatrixOpen(!isQuickMatrixOpen); setIsHandwritingMode(false); setIsTranslateOpen(false); setIsFormattingOpen(false); setIsClipboardOpen(false); }} className={`p-2 px-3 flex items-center gap-2 transition-all rounded-xl shrink-0 ${isQuickMatrixOpen ? 'bg-indigo-500 opacity-100 text-white shadow-lg' : 'opacity-60 text-white hover:opacity-100'}`}>⚡</button>
+                  <button onClick={() => { setIsTranslateOpen(!isTranslateOpen); setIsHandwritingMode(false); setIsQuickMatrixOpen(false); setIsFormattingOpen(false); setIsClipboardOpen(false); }} className={`p-2 px-3 flex items-center gap-2 transition-all rounded-xl shrink-0 ${isTranslateOpen ? 'bg-orange-500 opacity-100 text-white shadow-lg' : 'opacity-60 text-white hover:opacity-100'}`}>🌍</button>
+                  {settings.showFormatting && (
+                    <button onClick={() => { setIsFormattingOpen(!isFormattingOpen); setIsHandwritingMode(false); setIsQuickMatrixOpen(false); setIsTranslateOpen(false); setIsClipboardOpen(false); }} className={`p-2 px-3 flex items-center gap-2 transition-all rounded-xl shrink-0 ${isFormattingOpen ? 'bg-blue-500 opacity-100 text-white shadow-lg' : 'opacity-60 text-white hover:opacity-100'}`}>
+                      <span className="text-xl font-black">Tt</span>
+                    </button>
+                  )}
+                  {settings.voiceInputKey && (
+                    <button onClick={toggleVoiceTyping} className={`p-2 transition-all hover:opacity-100 flex items-center justify-center rounded-xl shrink-0 ${isListening ? 'bg-red-500 opacity-100 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.6)]' : 'opacity-60 text-white'}`}>
+                      <span className="text-xl">🎤</span>
+                    </button>
+                  )}
+                  <button onClick={() => { setSettingsView('main'); setIsSettingsOpen(true); }} className="p-2 opacity-60 ml-auto text-white hover:opacity-100 shrink-0">⚙️</button>
               </div>
               
               <div className="flex flex-col gap-1.5 pb-2 relative z-10 flex-1 overflow-hidden">
                 {isHandwritingMode ? (
-                  <HandwritingCanvas 
-                    isDark={activeTheme.isDark} 
-                    onClose={() => setIsHandwritingMode(false)}
-                    onRecognize={handleHandwritingRecognition}
-                    isLoading={isRecognizing}
-                  />
+                  <HandwritingCanvas isDark={activeTheme.isDark} onClose={() => setIsHandwritingMode(false)} onRecognize={handleHandwritingRecognition} isLoading={isRecognizing} />
+                ) : isClipboardOpen ? (
+                  <div className="flex flex-col gap-2 w-full animate-in fade-in slide-in-from-bottom-2 duration-300 overflow-y-auto no-scrollbar h-full p-2">
+                    <div className="flex justify-between items-center px-1 mb-1">
+                      <span className="text-white/60 text-xs font-bold uppercase tracking-widest">সাম্প্রতিক ক্লিপবোর্ড</span>
+                      <button onClick={() => setClipboardHistory([])} className="text-red-400 text-xs hover:underline">সব মুছুন</button>
+                    </div>
+                    {clipboardHistory.length === 0 ? (
+                      <div className="flex-1 flex items-center justify-center text-white/40 italic font-bangla text-sm">কোনো কপি করা টেক্সট নেই</div>
+                    ) : (
+                      <div className="flex flex-col gap-1.5">
+                        {clipboardHistory.map((item, idx) => (
+                          <button 
+                            key={idx} 
+                            onClick={() => { insertChar(item); handleVibrate(); }}
+                            className={`p-4 rounded-xl text-left font-bangla transition-all active:scale-[0.98] ${activeTheme.keyBg} ${activeTheme.keyText} border border-white/5 hover:bg-white/10 truncate`}
+                          >
+                            {item}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : isFormattingOpen ? (
+                  <div className="flex gap-2 w-full animate-in fade-in slide-in-from-bottom-2 duration-300 p-2 overflow-x-auto no-scrollbar">
+                    <button onClick={() => applyFormatting('bold')} className="flex-1 py-4 bg-white/10 text-white rounded-2xl font-black text-xl transition-all active:scale-95 flex items-center justify-center">B</button>
+                    <button onClick={() => applyFormatting('italic')} className="flex-1 py-4 bg-white/10 text-white rounded-2xl font-black italic text-xl transition-all active:scale-95 flex items-center justify-center">I</button>
+                    <button onClick={() => applyFormatting('underline')} className="flex-1 py-4 bg-white/10 text-white rounded-2xl font-black underline text-xl transition-all active:scale-95 flex items-center justify-center">U</button>
+                    <button onClick={() => applyFormatting('strike')} className="flex-1 py-4 bg-white/10 text-white rounded-2xl font-black line-through text-xl transition-all active:scale-95 flex items-center justify-center">S</button>
+                  </div>
                 ) : isQuickMatrixOpen ? (
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 w-full animate-in fade-in slide-in-from-bottom-2 duration-300 overflow-y-auto custom-scrollbar">
                     {QUICK_RESPONSES[getQuickResponseLanguage()].map((phrase, idx) => (
-                      <button 
-                        key={idx}
-                        onMouseDown={e => { e.preventDefault(); insertChar(phrase + " "); }}
-                        className={`py-4 px-3 rounded-xl shadow-md font-bangla font-black text-sm text-center transition-all active:scale-95 ${activeTheme.keyBg} ${activeTheme.keyText} border border-white/10 hover:bg-white/10`}
-                      >
-                        {phrase}
-                      </button>
+                      <button key={idx} onMouseDown={e => { e.preventDefault(); insertChar(phrase + " "); }} className={`py-4 px-3 rounded-xl shadow-md font-bangla font-black text-sm text-center transition-all active:scale-95 ${activeTheme.keyBg} ${activeTheme.keyText} border border-white/10 hover:bg-white/10`}>{phrase}</button>
                     ))}
-                    <button 
-                      onClick={() => setIsQuickMatrixOpen(false)}
-                      className="col-span-full py-3 mt-2 bg-white/10 text-white rounded-xl font-black text-xs uppercase tracking-widest transition-all active:scale-95"
-                    >
-                      কীবোর্ডে ফিরে যান
-                    </button>
                   </div>
                 ) : isTranslateOpen ? (
                   <div className="flex flex-col gap-4 w-full animate-in fade-in slide-in-from-bottom-2 duration-300 p-2 overflow-y-auto">
-                    <div className="flex items-center gap-2">
-                       <div className="flex-1 flex flex-col gap-1">
-                          <label className="text-[10px] uppercase font-black text-white/40 px-1">From</label>
-                          <div className="flex gap-1 overflow-x-auto no-scrollbar pb-1">
-                             {['Auto', 'Bangla', 'English', 'Arabic'].map(lang => (
-                               <button 
-                                 key={lang} 
-                                 onClick={() => setTranslateFrom(lang)}
-                                 className={`px-3 py-2 rounded-xl text-xs font-black transition-all ${translateFrom === lang ? 'bg-orange-500 text-white shadow-md' : 'bg-white/10 text-white/60'}`}
-                               >
-                                 {lang}
-                               </button>
-                             ))}
-                          </div>
-                       </div>
-                       <div className="text-white/20 text-xl pt-4">➔</div>
-                       <div className="flex-1 flex flex-col gap-1">
-                          <label className="text-[10px] uppercase font-black text-white/40 px-1">To</label>
-                          <div className="flex gap-1 overflow-x-auto no-scrollbar pb-1">
-                             {['Bangla', 'English', 'Arabic'].map(lang => (
-                               <button 
-                                 key={lang} 
-                                 onClick={() => setTranslateTo(lang)}
-                                 className={`px-3 py-2 rounded-xl text-xs font-black transition-all ${translateTo === lang ? 'bg-orange-500 text-white shadow-md' : 'bg-white/10 text-white/60'}`}
-                               >
-                                 {lang}
-                               </button>
-                             ))}
-                          </div>
-                       </div>
-                    </div>
-                    
-                    <button 
-                      onClick={handleTranslateAction}
-                      disabled={isTranslating || !text.trim()}
-                      className={`w-full py-4 rounded-2xl font-black text-lg transition-all active:scale-95 flex items-center justify-center gap-3 ${isTranslating || !text.trim() ? 'bg-slate-700 opacity-50 text-slate-400' : 'bg-orange-500 text-white shadow-xl shadow-orange-900/20'}`}
-                    >
-                      {isTranslating ? (
-                        <>
-                          <div className="w-5 h-5 border-3 border-white border-t-transparent rounded-full animate-spin"></div>
-                          <span>অনুবাদ করা হচ্ছে...</span>
-                        </>
-                      ) : (
-                        <>
-                          <span>🌍</span>
-                          <span>অনুবাদ করুন</span>
-                        </>
-                      )}
-                    </button>
-                    
-                    <button 
-                      onClick={() => setIsTranslateOpen(false)}
-                      className="w-full py-2 bg-white/5 text-white/40 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-white/10 transition-colors"
-                    >
-                      কীবোর্ডে ফিরে যান
-                    </button>
+                    <button onClick={handleTranslateAction} disabled={isTranslating || !text.trim()} className={`w-full py-4 rounded-2xl font-black text-lg transition-all active:scale-95 flex items-center justify-center gap-3 ${isTranslating || !text.trim() ? 'bg-slate-700 opacity-50 text-slate-400' : 'bg-orange-500 text-white shadow-xl shadow-orange-900/20'}`}>{isTranslating ? 'অনুবাদ করা হচ্ছে...' : 'অনুবাদ করুন'}</button>
                   </div>
                 ) : (
                   <div className="flex flex-col gap-1.5 flex-1 justify-center">
-                    {(isNumericMode ? NUMERIC_ROWS : KEYBOARD_ROWS).map((row, i) => {
-                      const mid = Math.ceil(row.length / 2);
-                      const leftHalf = row.slice(0, mid);
-                      const rightHalf = row.slice(mid);
-                      
-                      return (
-                        <div key={i} className={`flex justify-center gap-1 ${isSplit ? 'justify-between' : ''}`}>
-                            <div className={`flex gap-1 ${isSplit ? 'flex-1 justify-end pr-2' : ''}`}>
-                              {leftHalf.map(key => (
-                                <button key={key} onMouseDown={e => {e.preventDefault(); insertChar(key)}} className={`h-11 flex-1 max-w-[45px] rounded-xl shadow-sm border ${activeTheme.keyBg} ${activeTheme.keyText} ${settings.showKeyBorder ? 'border-white/10' : 'border-transparent'} text-lg active:scale-95 font-medium`}>{getMappedChar(key)}</button>
-                              ))}
-                            </div>
-                            
-                            {isSplit && <div className="w-10 shrink-0"></div>}
-                            
-                            <div className={`flex gap-1 ${isSplit ? 'flex-1 justify-start pl-2' : ''}`}>
-                              {rightHalf.map(key => (
-                                <button key={key} onMouseDown={e => {e.preventDefault(); insertChar(key)}} className={`h-11 flex-1 max-w-[45px] rounded-xl shadow-sm border ${activeTheme.keyBg} ${activeTheme.keyText} ${settings.showKeyBorder ? 'border-white/10' : 'border-transparent'} text-lg active:scale-95 font-medium`}>{getMappedChar(key)}</button>
-                              ))}
-                            </div>
-                        </div>
-                      );
-                    })}
+                    {settings.enableNumberRow && (
+                      <div className={`flex justify-center gap-1 mb-1 ${isSplit ? 'justify-between' : ''}`}>
+                         {(NUMERALS[layout === KeyboardLayout.ENGLISH ? 'en' : (layout === KeyboardLayout.ARABIC ? 'ar' : 'bn')]).map(num => (
+                            <button key={num} onMouseDown={e => {e.preventDefault(); insertChar(num)}} className={`h-9 flex-1 max-w-[40px] rounded-lg shadow-sm border ${activeTheme.keyBg} ${activeTheme.keyText} ${settings.showKeyBorder ? 'border-white/5' : 'border-transparent'} text-sm active:scale-95 opacity-80`}>{num}</button>
+                         ))}
+                      </div>
+                    )}
                     
+                    {(isNumericMode ? NUMERIC_ROWS : KEYBOARD_ROWS).map((row, i) => (
+                      <div key={i} className={`flex justify-center gap-1 ${isSplit ? 'justify-between' : ''}`}>
+                          <div className={`flex gap-1 ${isSplit ? 'flex-1 justify-end pr-2' : ''}`}>
+                            {row.map(key => (
+                              <button key={key} onMouseDown={e => {e.preventDefault(); insertChar(key)}} className={`h-11 flex-1 max-w-[45px] rounded-xl shadow-sm border ${activeTheme.keyBg} ${activeTheme.keyText} ${settings.showKeyBorder ? 'border-white/10' : 'border-transparent'} text-lg active:scale-95 font-medium`}>{getMappedChar(key)}</button>
+                            ))}
+                          </div>
+                      </div>
+                    ))}
                     <div className={`flex justify-center gap-1 mt-1 ${isSplit ? 'justify-between px-2' : ''}`}>
-                        <button 
-                          onMouseDown={e => { e.preventDefault(); setIsNumericMode(!isNumericMode); playClickSound(); handleVibrate(); }}
-                          className={`h-16 w-16 rounded-xl bg-white/10 flex items-center justify-center text-white active:bg-white/20 transition-all font-black text-sm ${isSplit ? 'flex-1 max-w-[60px]' : ''}`}
-                        >
-                          {isNumericMode ? 'ABC' : '123'}
-                        </button>
+                        <button onMouseDown={e => { e.preventDefault(); setIsNumericMode(!isNumericMode); playClickSound(); handleVibrate(); }} className={`h-16 w-16 rounded-xl bg-white/10 flex items-center justify-center text-white active:bg-white/20 transition-all font-black text-sm`}>{isNumericMode ? 'ABC' : '123'}</button>
                         
-                        {isSplit && <div className="w-4 shrink-0"></div>}
+                        {settings.showComma && <button onMouseDown={e => {e.preventDefault(); insertChar(',')}} className={`h-16 w-12 rounded-xl bg-white/5 flex items-center justify-center text-white active:bg-white/10 text-xl font-bold`}>,</button>}
                         
-                        <button 
-                          ref={spaceRef}
-                          onPointerDown={onSpacePointerDown}
-                          onPointerMove={onSpacePointerMove}
-                          onPointerUp={onSpacePointerUp}
-                          onPointerCancel={(e) => { startX.current = null; isSwiping.current = false; e.currentTarget.releasePointerCapture(e.pointerId); }}
-                          className={`h-16 flex-1 rounded-xl bg-white/10 text-lg font-bold uppercase text-white transition-all active:bg-white/20 select-none overflow-hidden relative touch-none ${isSplit ? 'flex-[2]' : ''}`}
-                          style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
-                        >
+                        <button ref={spaceRef} onPointerDown={onSpacePointerDown} onPointerMove={onSpacePointerMove} onPointerUp={onSpacePointerUp} className={`h-16 flex-1 rounded-xl bg-white/10 text-lg font-bold uppercase text-white transition-all active:bg-white/20 select-none overflow-hidden relative touch-none`}>
                           <div key={layout} className="absolute inset-0 flex items-center justify-center animate-in fade-in slide-in-from-left-4 duration-300 pointer-events-none text-white font-black">
-                            {layout === KeyboardLayout.BANGLA_AVRO ? 'অভ্র' : 
-                              layout === KeyboardLayout.BANGLA_JATIYO ? 'জাতীয়' : 
-                              layout === KeyboardLayout.BANGLA_UNIBIJOY ? 'ইউনিবিজয়' :
-                              layout === KeyboardLayout.ARABIC ? 'العربية' : 
-                              layout === KeyboardLayout.BANGLA_PROVHAT ? 'প্রভাতে' : 
-                              layout === KeyboardLayout.ENGLISH ? 'English' : layout}
+                            {layout === KeyboardLayout.BANGLA_AVRO ? 'অভ্র' : layout === KeyboardLayout.BANGLA_JATIYO ? 'জাতীয়' : layout === KeyboardLayout.BANGLA_UNIBIJOY ? 'ইউনিবিজয়' : layout === KeyboardLayout.ARABIC ? 'العربية' : layout === KeyboardLayout.BANGLA_PROVHAT ? 'প্রভাতে' : 'English'}
                           </div>
                         </button>
                         
-                        {isSplit && <div className="w-4 shrink-0"></div>}
+                        {settings.showPeriod && <button onMouseDown={e => {e.preventDefault(); insertChar(layout === KeyboardLayout.ENGLISH ? '.' : '।')}} className={`h-16 w-12 rounded-xl bg-white/5 flex items-center justify-center text-white active:bg-white/10 text-xl font-bold`}>{layout === KeyboardLayout.ENGLISH ? '.' : '।'}</button>}
                         
-                        <button 
-                          onMouseDown={e => {e.preventDefault(); playClickSound(); const s = textareaRef.current?.selectionStart || 0; updateTextAndCursor(text.substring(0, s-1) + text.substring(s), s-1)}} 
-                          className={`h-16 w-16 rounded-xl bg-white/10 flex items-center justify-center text-white active:bg-white/20 ${isSplit ? 'flex-1 max-w-[60px]' : ''}`}
-                        >
-                          ⌫
-                        </button>
+                        <button onMouseDown={e => {e.preventDefault(); playClickSound(); const s = textareaRef.current?.selectionStart || 0; updateTextAndCursor(text.substring(0, s-1) + text.substring(s), s-1)}} className={`h-16 w-16 rounded-xl bg-white/10 flex items-center justify-center text-white active:bg-white/20`}>⌫</button>
                     </div>
                   </div>
                 )}
               </div>
+            </div>
           </div>
         )}
       </main>

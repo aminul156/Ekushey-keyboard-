@@ -32,6 +32,7 @@ export interface ThemeConfig {
   accentText: string;
   border?: string;
   isDark: boolean;
+  category?: string;
 }
 
 export interface AppSettings {
@@ -104,4 +105,8 @@ export interface AppSettings {
   enableBanglaInNumberPad: boolean;
   oldStyleReph: boolean;
   autoVowelForming: boolean;
+  // Text Correction
+  blockOffensiveWords: boolean;
+  personalizedSuggestions: boolean;
+  nextWordSuggestions: boolean;
 }
