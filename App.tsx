@@ -77,6 +77,7 @@ const DEFAULT_SETTINGS: ExtendedAppSettings = {
   keyLongPressDelay: 300,
   spaceCursorLongPressDelay: 1000,
   spaceCursorSpeed: 150,
+  // Fixed: removed invalid 'boolean' type usage in object literal
   emojiPhysicalKeyboard: true,
   showTypedWord: true,
   voiceTypingEngine: 'Google Voice Typing',
@@ -161,13 +162,11 @@ const HandwritingCanvas: React.FC<{
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       setHasContent(false);
     }
-    if (navigator.vibrate) navigator.vibrate(10);
   };
 
   const handleDone = () => {
     const canvas = canvasRef.current;
     if (canvas && hasContent && !isLoading) {
-      if (navigator.vibrate) navigator.vibrate(30);
       const base64 = canvas.toDataURL('image/png').split(',')[1];
       onRecognize(base64);
       clear();
@@ -190,9 +189,19 @@ const HandwritingCanvas: React.FC<{
             এখানে আঁকুন বা লিখুন...
           </div>
         )}
+        {!isLoading && hasContent && (
+          <button 
+            onClick={clear}
+            className="absolute top-2 right-2 w-8 h-8 bg-black/40 hover:bg-black/60 text-white rounded-full flex items-center justify-center backdrop-blur-sm transition-colors z-10"
+            title="Clear All"
+          >
+            ✕
+          </button>
+        )}
         {isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-md z-20">
-            <div className="flex flex-col items-center gap-3">
+          <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-md z-20 overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-1 bg-teal-400/50 shadow-[0_0_15px_rgba(45,212,191,0.8)] animate-scan"></div>
+            <div className="flex flex-col items-center gap-3 z-30">
               <div className="w-10 h-10 border-4 border-teal-500 border-t-transparent rounded-full animate-spin"></div>
               <span className="text-white text-sm font-black uppercase tracking-widest animate-pulse">অনুসন্ধান করা হচ্ছে...</span>
             </div>
@@ -203,7 +212,9 @@ const HandwritingCanvas: React.FC<{
         <button onClick={onClose} className="flex-1 py-4 bg-white/10 text-white rounded-2xl font-black text-lg transition-all active:scale-95 flex items-center justify-center gap-2">
           <span>⌨️</span>
         </button>
-        <button onClick={clear} className="flex-1 py-4 bg-white/10 text-white rounded-2xl font-black transition-all active:scale-95">মুছুন</button>
+        <button onClick={clear} className="flex-1 py-4 bg-white/10 text-white rounded-2xl font-black transition-all active:scale-95 flex items-center justify-center gap-2">
+          <span className="text-sm">সব মুছুন</span>
+        </button>
         <button 
           onClick={handleDone} 
           disabled={isLoading || !hasContent} 
@@ -230,6 +241,7 @@ const App: React.FC = () => {
   const [isRecognizing, setIsRecognizing] = useState<boolean>(false);
   const [isListening, setIsListening] = useState<boolean>(false);
   const [isResizingMode, setIsResizingMode] = useState<boolean>(false);
+  const [isLandscape, setIsLandscape] = useState<boolean>(window.innerWidth > window.innerHeight);
   
   const [translateFrom, setTranslateFrom] = useState<string>('Auto');
   const [translateTo, setTranslateTo] = useState<string>('English');
@@ -258,12 +270,26 @@ const App: React.FC = () => {
   });
 
   useEffect(() => {
+    const handleResize = () => setIsLandscape(window.innerWidth > window.innerHeight);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
   }, [settings]);
 
   const activeTheme = useMemo(() => {
     return KEYBOARD_THEMES.find(t => t.id === settings.theme) || KEYBOARD_THEMES[0];
   }, [settings.theme]);
+
+  const handleVibrate = useCallback(() => {
+    if (!settings.vibrateOnKeypress || !navigator.vibrate) return;
+    let duration = 10;
+    if (settings.vibrationDuration === '25ms') duration = 25;
+    if (settings.vibrationDuration === '50ms') duration = 50;
+    navigator.vibrate(duration);
+  }, [settings.vibrateOnKeypress, settings.vibrationDuration]);
 
   const playClickSound = useCallback(() => {
     if (!settings.soundOnKeypress) return;
@@ -277,7 +303,7 @@ const App: React.FC = () => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       
-      const vol = (parseInt(settings.soundVolume) || 50) / 500; // Normalized volume
+      const vol = (parseInt(settings.soundVolume) || 50) / 500;
 
       switch(settings.soundProfile) {
         case 'Tink':
@@ -293,7 +319,7 @@ const App: React.FC = () => {
           osc.type = 'square';
           osc.frequency.setValueAtTime(120, ctx.currentTime);
           break;
-        default: // Click
+        default:
           osc.type = 'sine';
           osc.frequency.setValueAtTime(150, ctx.currentTime);
       }
@@ -321,9 +347,9 @@ const App: React.FC = () => {
       nextIdx = (currentIdx - 1 + layouts.length) % layouts.length;
     }
     setLayout(layouts[nextIdx]);
-    if (navigator.vibrate) navigator.vibrate(20);
+    handleVibrate();
     playClickSound();
-  }, [layout, settings.enabledLayouts, playClickSound]);
+  }, [layout, settings.enabledLayouts, playClickSound, handleVibrate]);
 
   const updateTextAndCursor = (newText: string, newCursorPos: number) => {
     setText(newText);
@@ -354,6 +380,7 @@ const App: React.FC = () => {
   }, [isNumericMode, isShifted, isCapsLock, layout, settings.enableBanglaInNumberPad]);
 
   const insertChar = useCallback((char: string) => {
+    handleVibrate();
     playClickSound();
     const el = textareaRef.current;
     if (!el) return;
@@ -361,6 +388,15 @@ const App: React.FC = () => {
     const end = el.selectionEnd || 0;
     let currentText = text.substring(0, start) + text.substring(end);
     let insertionIndex = start;
+
+    let processedInputChar = char;
+    if (settings.autoCapitalization && layout === KeyboardLayout.ENGLISH && !isNumericMode && !isHandwritingMode && !isQuickMatrixOpen && !isShifted && !isCapsLock) {
+      const textBefore = text.substring(0, start);
+      const isStartOfSentence = textBefore.trim().length === 0 || /[.!?]\s*$/.test(textBefore);
+      if (isStartOfSentence) {
+        processedInputChar = char.toUpperCase();
+      }
+    }
 
     if (layout === KeyboardLayout.BANGLA_AVRO && !isNumericMode && !isHandwritingMode && char.match(/[a-zA-Z\^`':]/)) {
         if (char === '`') { phoneticBuffer.current = ''; lastInsertedLen.current = 0; return; }
@@ -385,10 +421,10 @@ const App: React.FC = () => {
         }
     }
 
-    const charToInsert = isHandwritingMode ? char : (isQuickMatrixOpen ? char : getMappedChar(char));
+    const charToInsert = isHandwritingMode ? char : (isQuickMatrixOpen ? char : getMappedChar(processedInputChar));
     updateTextAndCursor(currentText.substring(0, insertionIndex) + charToInsert + currentText.substring(insertionIndex), insertionIndex + charToInsert.length);
     phoneticBuffer.current = ''; lastInsertedLen.current = 0;
-  }, [text, layout, isNumericMode, isShifted, isCapsLock, settings, getMappedChar, isHandwritingMode, isQuickMatrixOpen, playClickSound]);
+  }, [text, layout, isNumericMode, isShifted, isCapsLock, settings, getMappedChar, isHandwritingMode, isQuickMatrixOpen, playClickSound, handleVibrate]);
 
   const handleHandwritingRecognition = async (base64: string) => {
     setIsRecognizing(true);
@@ -408,12 +444,12 @@ const App: React.FC = () => {
   const handleTranslateAction = async () => {
     if (!text.trim() || isTranslating) return;
     setIsTranslating(true);
-    if (navigator.vibrate) navigator.vibrate(20);
+    handleVibrate();
     try {
       const result = await getAIAssistance(text, 'translate', { from: translateFrom, to: translateTo });
       if (result) {
         setText(result);
-        if (navigator.vibrate) navigator.vibrate(50);
+        handleVibrate();
       }
     } catch (err) {
       console.error("Translate error:", err);
@@ -492,20 +528,20 @@ const App: React.FC = () => {
     e.currentTarget.releasePointerCapture(e.pointerId);
   };
 
-  const handleResizePointerDown = (e: React.PointerEvent) => {
+  const handleResizePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     resizeStartY.current = e.clientY;
     resizeStartSize.current = settings.kbSize;
     e.currentTarget.setPointerCapture(e.pointerId);
   };
 
-  const handleResizePointerMove = (e: React.PointerEvent) => {
+  const handleResizePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (resizeStartY.current === null) return;
     const diffY = resizeStartY.current - e.clientY;
     const newSize = Math.max(50, Math.min(150, resizeStartSize.current + (diffY / 2)));
     setSettings(prev => ({ ...prev, kbSize: newSize }));
   };
 
-  const handleResizePointerUp = (e: React.PointerEvent) => {
+  const handleResizePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     resizeStartY.current = null;
     e.currentTarget.releasePointerCapture(e.pointerId);
   };
@@ -531,20 +567,35 @@ const App: React.FC = () => {
       </div>
     );
 
+    const RadioItem = ({ label, selected, onClick }: { label: string, selected: boolean, onClick: () => void }) => (
+      <button onClick={onClick} className="w-full flex items-center justify-between py-5 px-6 border-b last:border-0 border-slate-100 dark:border-white/5 group active:bg-slate-50 dark:active:bg-white/5 transition-colors">
+        <span className={`text-lg font-medium ${selected ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>{label}</span>
+        <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${selected ? 'border-blue-500 bg-blue-500' : 'border-slate-300 dark:border-slate-600'}`}>
+          {selected && <div className="w-2.5 h-2.5 bg-white rounded-full shadow-inner" />}
+        </div>
+      </button>
+    );
+
     return (
-      <div className="fixed inset-0 z-[3000] bg-slate-50 dark:bg-slate-950 p-6 flex flex-col font-bangla animate-in slide-in-from-right overflow-y-auto">
-        <header className="flex items-center gap-4 mb-8">
-          <button onClick={() => settingsView === 'main' ? setIsSettingsOpen(false) : setSettingsView('main')} className="p-3 bg-white dark:bg-slate-800 rounded-2xl">
+      <div className="fixed inset-0 z-[3000] bg-[#f2f2f2] dark:bg-slate-950 flex flex-col font-sans animate-in slide-in-from-right overflow-y-auto">
+        <header className="flex items-center gap-6 px-6 py-5 bg-[#f2f2f2] dark:bg-slate-900 sticky top-0 z-10">
+          <button onClick={() => settingsView === 'main' ? setIsSettingsOpen(false) : setSettingsView('main')} className="p-2 -ml-2 text-slate-800 dark:text-white text-2xl">
             {settingsView === 'main' ? '✕' : '←'}
           </button>
-          <h2 className="text-2xl font-black">সেটিংস</h2>
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">
+            {settingsView === 'mode' ? 'Keyboard mode' : 'সেটিংস'}
+          </h2>
         </header>
 
-        <div className="max-w-xl mx-auto w-full space-y-4 pb-20">
+        <div className="flex-1 w-full space-y-4 pb-20">
           {settingsView === 'main' && (
-            <div className="grid gap-3">
+            <div className="px-6 grid gap-3">
               <button onClick={() => setSettingsView('appearance')} className="w-full flex items-center justify-between p-5 bg-white dark:bg-slate-800 rounded-2xl shadow-sm">
                 <div className="flex items-center gap-4"><span className="text-2xl">🎨</span><span className="font-black">চেহারা ও থিম (Themes)</span></div>
+                <span>➔</span>
+              </button>
+              <button onClick={() => setSettingsView('mode')} className="w-full flex items-center justify-between p-5 bg-white dark:bg-slate-800 rounded-2xl shadow-sm">
+                <div className="flex items-center gap-4"><span className="text-2xl">📱</span><span className="font-black">কীবোর্ড মোড (Keyboard Mode)</span></div>
                 <span>➔</span>
               </button>
               <button onClick={() => setSettingsView('preference')} className="w-full flex items-center justify-between p-5 bg-white dark:bg-slate-800 rounded-2xl shadow-sm">
@@ -558,8 +609,56 @@ const App: React.FC = () => {
             </div>
           )}
 
+          {settingsView === 'mode' && (
+            <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
+              <div className="px-6 space-y-8">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest px-1 mb-4">Portrait View</h3>
+                  <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-sm overflow-hidden border dark:border-white/5">
+                    <RadioItem 
+                      label="Standard keyboard" 
+                      selected={settings.portraitMode === 'standard'} 
+                      onClick={() => setSettings({...settings, portraitMode: 'standard'})} 
+                    />
+                    <RadioItem 
+                      label="One-handed keyboard" 
+                      selected={settings.portraitMode === 'one-handed'} 
+                      onClick={() => setSettings({...settings, portraitMode: 'one-handed'})} 
+                    />
+                    <RadioItem 
+                      label="Floating keyboard" 
+                      selected={settings.portraitMode === 'floating'} 
+                      onClick={() => setSettings({...settings, portraitMode: 'floating'})} 
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest px-1 mb-4">Landscape View</h3>
+                  <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-sm overflow-hidden border dark:border-white/5">
+                    <RadioItem 
+                      label="Standard keyboard" 
+                      selected={settings.landscapeMode === 'standard'} 
+                      onClick={() => setSettings({...settings, landscapeMode: 'standard'})} 
+                    />
+                    <RadioItem 
+                      label="Split keyboard" 
+                      selected={settings.landscapeMode === 'split'} 
+                      onClick={() => setSettings({...settings, landscapeMode: 'split'})} 
+                    />
+                    <RadioItem 
+                      label="Floating keyboard" 
+                      selected={settings.landscapeMode === 'floating'} 
+                      onClick={() => setSettings({...settings, landscapeMode: 'floating'})} 
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {settingsView === 'appearance' && (
-            <div className="space-y-6">
+            <div className="px-6 space-y-6">
                <div className="p-5 bg-white dark:bg-slate-800 rounded-[2rem] shadow-sm">
                  <h3 className="font-black text-xs text-slate-400 uppercase mb-5 tracking-widest px-1">উপলব্ধ থিমসমূহ (Themes)</h3>
                  <div className="grid grid-cols-2 gap-4">
@@ -568,7 +667,7 @@ const App: React.FC = () => {
                         key={t.id} 
                         onClick={() => {
                           setSettings({...settings, theme: t.id});
-                          if (navigator.vibrate) navigator.vibrate(10);
+                          handleVibrate();
                           playClickSound();
                         }} 
                         className={`group relative p-3 rounded-[1.5rem] border-2 transition-all duration-300 ${settings.theme === t.id ? 'border-teal-500 bg-teal-50/50 dark:bg-teal-900/20 scale-105 shadow-md' : 'border-slate-100 dark:border-white/5 hover:border-slate-200'}`}
@@ -621,13 +720,13 @@ const App: React.FC = () => {
                <div className="space-y-4">
                     <div className="p-5 bg-white dark:bg-slate-800 rounded-[2rem] shadow-sm">
                         <label className="font-black text-xs text-slate-400 block mb-4 uppercase tracking-widest flex justify-between">
-                            <span>কীবোর্ড সাইজ (Size)</span>
+                            <span>কীবোর্ড সাইজ (Keyboard Size)</span>
                             <span>{Math.round(settings.kbSize)}%</span>
                         </label>
                         <input type="range" min="50" max="150" value={settings.kbSize} onChange={e => setSettings({...settings, kbSize: parseInt(e.target.value)})} className="w-full accent-teal-500" />
                         <button 
                           onClick={() => { setIsSettingsOpen(false); setIsResizingMode(true); }}
-                          className="mt-4 w-full py-2 bg-slate-100 dark:bg-white/5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-colors"
+                          className="mt-4 w-full py-3 bg-teal-500/10 dark:bg-teal-500/20 text-teal-600 dark:text-teal-400 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-teal-500/20 transition-colors border border-teal-500/20"
                         >
                           ম্যানুয়ালি রিসাইজ করুন (Resize with Handle)
                         </button>
@@ -635,7 +734,7 @@ const App: React.FC = () => {
 
                     <div className="p-5 bg-white dark:bg-slate-800 rounded-[2rem] shadow-sm">
                         <label className="font-black text-xs text-slate-400 block mb-4 uppercase tracking-widest flex justify-between">
-                            <span>ট্রান্সপারেন্সি (Transparency)</span>
+                            <span>স্বচ্ছতা (Transparency)</span>
                             <span>{settings.kbTransparency}%</span>
                         </label>
                         <input type="range" min="20" max="100" value={settings.kbTransparency} onChange={e => setSettings({...settings, kbTransparency: parseInt(e.target.value)})} className="w-full accent-teal-500" />
@@ -654,10 +753,32 @@ const App: React.FC = () => {
           )}
 
           {settingsView === 'preference' && (
-            <div className="space-y-4">
+            <div className="px-6 space-y-4">
                <div className="p-5 bg-white dark:bg-slate-800 rounded-[2rem] space-y-4">
-                  <h3 className="font-black text-slate-400 text-xs uppercase mb-2 tracking-widest">টাইপিং পছন্দ</h3>
-                  <Toggle label="স্প্লিট কীবোর্ড (Split Mode)" value={settings.enableSplitKeyboard} onChange={v => setSettings({...settings, enableSplitKeyboard: v})} />
+                  <h3 className="font-black text-slate-400 text-xs uppercase mb-2 tracking-widest">ভাইব্রেশন ও সাউন্ড</h3>
+                  <Toggle label="ভাইব্রেশন (Vibration)" value={settings.vibrateOnKeypress} onChange={v => setSettings({...settings, vibrateOnKeypress: v})} />
+                  
+                  {settings.vibrateOnKeypress && (
+                    <div className="space-y-4 pt-2 animate-in fade-in slide-in-from-top-2">
+                       <label className="text-xs font-black text-slate-500 uppercase tracking-widest px-1">ভাইব্রেশনের তীব্রতা (Intensity)</label>
+                       <div className="grid grid-cols-3 gap-2">
+                          {[
+                            { id: '10ms', label: 'Low' },
+                            { id: '25ms', label: 'Medium' },
+                            { id: '50ms', label: 'High' }
+                          ].map(opt => (
+                            <button 
+                              key={opt.id}
+                              onClick={() => { setSettings({...settings, vibrationDuration: opt.id}); handleVibrate(); }}
+                              className={`py-3 rounded-xl text-xs font-black transition-all ${settings.vibrationDuration === opt.id ? 'bg-teal-500 text-white shadow-md' : 'bg-slate-100 dark:bg-white/5 text-slate-600 dark:text-slate-400'}`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                       </div>
+                    </div>
+                  )}
+
                   <Toggle label="কী-প্রেস সাউন্ড (Sound on keypress)" value={settings.soundOnKeypress} onChange={v => setSettings({...settings, soundOnKeypress: v})} />
                   {settings.soundOnKeypress && (
                     <div className="space-y-6 pt-2 animate-in fade-in slide-in-from-top-2">
@@ -685,11 +806,16 @@ const App: React.FC = () => {
                     </div>
                   )}
                </div>
+
+               <div className="p-5 bg-white dark:bg-slate-800 rounded-[2rem] space-y-4">
+                  <h3 className="font-black text-slate-400 text-xs uppercase mb-2 tracking-widest">টাইপিং পছন্দ</h3>
+                  <Toggle label="অটো ক্যাপিটালাইজেশন (Auto-Capitalization)" value={settings.autoCapitalization} onChange={v => setSettings({...settings, autoCapitalization: v})} />
+               </div>
             </div>
           )}
 
           {settingsView === 'advance' && (
-            <div className="space-y-3">
+            <div className="px-6 space-y-3">
                <div className="p-5 bg-teal-50 rounded-[2rem] space-y-3 border border-teal-100">
                   <h3 className="font-black text-teal-600 text-[10px] uppercase mb-4 tracking-widest">অভ্র সেটিংস (Avro)</h3>
                   <Toggle label="পুরাতন নিয়মে রেফ" value={settings.oldStyleReph} onChange={v => setSettings({...settings, oldStyleReph: v})} />
@@ -704,13 +830,28 @@ const App: React.FC = () => {
 
   const isRTL = layout === KeyboardLayout.ARABIC;
 
+  // Layout Logic Helpers
+  const currentMode = isLandscape ? settings.landscapeMode : settings.portraitMode;
+  const isSplit = isLandscape && currentMode === 'split';
+  const isOneHanded = !isLandscape && currentMode === 'one-handed';
+  const isFloating = currentMode === 'floating';
+
   // Compute Custom Styles
   const kbContainerStyle: React.CSSProperties = {
     opacity: settings.kbTransparency / 100,
-    position: 'relative',
+    position: isFloating ? 'fixed' : 'relative',
+    bottom: isFloating ? '10%' : 'auto',
+    left: isFloating ? '50%' : 'auto',
+    transform: isFloating ? 'translateX(-50%) scale(0.9)' : 'none',
+    width: isFloating ? 'min(90%, 400px)' : (isOneHanded ? '85%' : '100%'),
+    marginLeft: isOneHanded ? (settings.oneHandedSide === 'right' ? 'auto' : '0') : 'auto',
+    marginRight: isOneHanded ? (settings.oneHandedSide === 'left' ? 'auto' : '0') : 'auto',
     overflow: 'hidden',
     height: `${settings.kbSize * 2.8}px`,
-    transition: 'height 0.1s linear'
+    transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+    zIndex: isFloating ? 2000 : 10,
+    boxShadow: isFloating ? '0 25px 50px -12px rgba(0, 0, 0, 0.5)' : 'none',
+    border: isFloating ? '2px solid rgba(255,255,255,0.1)' : 'none'
   };
 
   const kbBackgroundStyle: React.CSSProperties = settings.customThemeImage ? {
@@ -829,7 +970,7 @@ const App: React.FC = () => {
           <div className="flex-1 flex flex-col justify-center font-bangla animate-in zoom-in-95">
              <div className="grid grid-cols-2 gap-4">
                 {[
-                  { label: 'সেটিংস', onClick: () => { setSettingsView('main'); setIsSettingsOpen(true); } },
+                  { label: 'সেটিিংস', onClick: () => { setSettingsView('main'); setIsSettingsOpen(true); } },
                   { label: 'অনুশীলন', onClick: () => {} },
                   { label: 'কী-ম্যাপ', onClick: () => {} },
                   { label: 'টিপস', onClick: () => {} },
@@ -859,21 +1000,22 @@ const App: React.FC = () => {
               <div style={kbBackgroundStyle}></div>
               <div style={kbOverlayStyle}></div>
 
-              {/* Manual Resize Drag Handle Overlay */}
               {isResizingMode && (
                 <div className="absolute inset-0 bg-black/40 backdrop-blur-sm z-[200] flex flex-col items-center justify-center p-6 text-center">
                   <div 
                     onPointerDown={handleResizePointerDown}
                     onPointerMove={handleResizePointerMove}
                     onPointerUp={handleResizePointerUp}
-                    className="w-full py-8 mb-4 bg-teal-500/20 border-2 border-teal-500 border-dashed rounded-3xl flex flex-col items-center justify-center gap-2 cursor-ns-resize active:bg-teal-500/40 transition-colors"
+                    className="w-full py-12 mb-4 bg-teal-500/20 border-4 border-teal-500 border-dashed rounded-[3rem] flex flex-col items-center justify-center gap-4 cursor-ns-resize active:bg-teal-500/40 transition-all group"
                   >
-                    <span className="text-4xl">↕️</span>
-                    <span className="text-white font-black uppercase text-xs tracking-widest">সাইজ পরিবর্তন করতে টানুন</span>
+                    <div className="w-16 h-16 bg-teal-500 rounded-full flex items-center justify-center text-white text-3xl shadow-[0_0_20px_rgba(20,184,166,0.6)] group-active:scale-110 transition-transform">
+                      ↕️
+                    </div>
+                    <span className="text-white font-black uppercase text-sm tracking-[0.2em]">সাইজ পরিবর্তন করতে টানুন</span>
                   </div>
                   <button 
                     onClick={() => setIsResizingMode(false)}
-                    className="py-4 px-12 bg-white text-slate-900 rounded-2xl font-black shadow-2xl active:scale-95 transition-transform"
+                    className="py-4 px-12 bg-white text-slate-900 rounded-2xl font-black shadow-2xl active:scale-95 transition-transform border-b-4 border-slate-300"
                   >
                     সেভ করুন (Done)
                   </button>
@@ -885,7 +1027,6 @@ const App: React.FC = () => {
                   <button onClick={() => setIsNumericMode(!isNumericMode)} className="p-2 font-black opacity-60 text-white hover:opacity-100">123</button>
                   <button onClick={() => cycleLayout('next')} className="p-2 opacity-60 text-white hover:opacity-100">🌐</button>
                   
-                  {/* Dedicated Handwriting Button */}
                   <button 
                     onClick={() => { setIsHandwritingMode(!isHandwritingMode); setIsQuickMatrixOpen(false); setIsTranslateOpen(false); }} 
                     className={`p-2 px-3 flex items-center gap-2 transition-all rounded-xl ${isHandwritingMode ? 'bg-teal-500 opacity-100 text-white shadow-lg' : 'opacity-60 text-white hover:opacity-100'}`}
@@ -894,7 +1035,6 @@ const App: React.FC = () => {
                     {isHandwritingMode && <span className="text-xs font-black uppercase">Handwriting</span>}
                   </button>
 
-                  {/* Quick Response Matrix Button */}
                   <button 
                     onClick={() => { setIsQuickMatrixOpen(!isQuickMatrixOpen); setIsHandwritingMode(false); setIsTranslateOpen(false); }} 
                     className={`p-2 px-3 flex items-center gap-2 transition-all rounded-xl ${isQuickMatrixOpen ? 'bg-indigo-500 opacity-100 text-white shadow-lg' : 'opacity-60 text-white hover:opacity-100'}`}
@@ -903,7 +1043,6 @@ const App: React.FC = () => {
                     {isQuickMatrixOpen && <span className="text-xs font-black uppercase">Matrix</span>}
                   </button>
 
-                  {/* Translation Button */}
                   <button 
                     onClick={() => { setIsTranslateOpen(!isTranslateOpen); setIsHandwritingMode(false); setIsQuickMatrixOpen(false); }} 
                     className={`p-2 px-3 flex items-center gap-2 transition-all rounded-xl ${isTranslateOpen ? 'bg-orange-500 opacity-100 text-white shadow-lg' : 'opacity-60 text-white hover:opacity-100'}`}
@@ -929,7 +1068,7 @@ const App: React.FC = () => {
                     {QUICK_RESPONSES[getQuickResponseLanguage()].map((phrase, idx) => (
                       <button 
                         key={idx}
-                        onMouseDown={e => { e.preventDefault(); insertChar(phrase + " "); if (navigator.vibrate) navigator.vibrate(10); }}
+                        onMouseDown={e => { e.preventDefault(); insertChar(phrase + " "); }}
                         className={`py-4 px-3 rounded-xl shadow-md font-bangla font-black text-sm text-center transition-all active:scale-95 ${activeTheme.keyBg} ${activeTheme.keyText} border border-white/10 hover:bg-white/10`}
                       >
                         {phrase}
@@ -1009,16 +1148,16 @@ const App: React.FC = () => {
                       const rightHalf = row.slice(mid);
                       
                       return (
-                        <div key={i} className={`flex justify-center gap-1 ${settings.enableSplitKeyboard ? 'justify-between' : ''}`}>
-                            <div className={`flex gap-1 ${settings.enableSplitKeyboard ? 'flex-1 justify-end pr-2' : ''}`}>
+                        <div key={i} className={`flex justify-center gap-1 ${isSplit ? 'justify-between' : ''}`}>
+                            <div className={`flex gap-1 ${isSplit ? 'flex-1 justify-end pr-2' : ''}`}>
                               {leftHalf.map(key => (
                                 <button key={key} onMouseDown={e => {e.preventDefault(); insertChar(key)}} className={`h-11 flex-1 max-w-[45px] rounded-xl shadow-sm border ${activeTheme.keyBg} ${activeTheme.keyText} ${settings.showKeyBorder ? 'border-white/10' : 'border-transparent'} text-lg active:scale-95 font-medium`}>{getMappedChar(key)}</button>
                               ))}
                             </div>
                             
-                            {settings.enableSplitKeyboard && <div className="w-10 shrink-0"></div>}
+                            {isSplit && <div className="w-10 shrink-0"></div>}
                             
-                            <div className={`flex gap-1 ${settings.enableSplitKeyboard ? 'flex-1 justify-start pl-2' : ''}`}>
+                            <div className={`flex gap-1 ${isSplit ? 'flex-1 justify-start pl-2' : ''}`}>
                               {rightHalf.map(key => (
                                 <button key={key} onMouseDown={e => {e.preventDefault(); insertChar(key)}} className={`h-11 flex-1 max-w-[45px] rounded-xl shadow-sm border ${activeTheme.keyBg} ${activeTheme.keyText} ${settings.showKeyBorder ? 'border-white/10' : 'border-transparent'} text-lg active:scale-95 font-medium`}>{getMappedChar(key)}</button>
                               ))}
@@ -1027,15 +1166,15 @@ const App: React.FC = () => {
                       );
                     })}
                     
-                    <div className={`flex justify-center gap-1 mt-1 ${settings.enableSplitKeyboard ? 'justify-between px-2' : ''}`}>
+                    <div className={`flex justify-center gap-1 mt-1 ${isSplit ? 'justify-between px-2' : ''}`}>
                         <button 
-                          onMouseDown={e => { e.preventDefault(); setIsNumericMode(!isNumericMode); playClickSound(); }}
-                          className={`h-16 w-16 rounded-xl bg-white/10 flex items-center justify-center text-white active:bg-white/20 transition-all font-black text-sm ${settings.enableSplitKeyboard ? 'flex-1 max-w-[60px]' : ''}`}
+                          onMouseDown={e => { e.preventDefault(); setIsNumericMode(!isNumericMode); playClickSound(); handleVibrate(); }}
+                          className={`h-16 w-16 rounded-xl bg-white/10 flex items-center justify-center text-white active:bg-white/20 transition-all font-black text-sm ${isSplit ? 'flex-1 max-w-[60px]' : ''}`}
                         >
                           {isNumericMode ? 'ABC' : '123'}
                         </button>
                         
-                        {settings.enableSplitKeyboard && <div className="w-4 shrink-0"></div>}
+                        {isSplit && <div className="w-4 shrink-0"></div>}
                         
                         <button 
                           ref={spaceRef}
@@ -1043,7 +1182,7 @@ const App: React.FC = () => {
                           onPointerMove={onSpacePointerMove}
                           onPointerUp={onSpacePointerUp}
                           onPointerCancel={(e) => { startX.current = null; isSwiping.current = false; e.currentTarget.releasePointerCapture(e.pointerId); }}
-                          className={`h-16 flex-1 rounded-xl bg-white/10 text-lg font-bold uppercase text-white transition-all active:bg-white/20 select-none overflow-hidden relative touch-none ${settings.enableSplitKeyboard ? 'flex-[2]' : ''}`}
+                          className={`h-16 flex-1 rounded-xl bg-white/10 text-lg font-bold uppercase text-white transition-all active:bg-white/20 select-none overflow-hidden relative touch-none ${isSplit ? 'flex-[2]' : ''}`}
                           style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
                         >
                           <div key={layout} className="absolute inset-0 flex items-center justify-center animate-in fade-in slide-in-from-left-4 duration-300 pointer-events-none text-white font-black">
@@ -1056,11 +1195,11 @@ const App: React.FC = () => {
                           </div>
                         </button>
                         
-                        {settings.enableSplitKeyboard && <div className="w-4 shrink-0"></div>}
+                        {isSplit && <div className="w-4 shrink-0"></div>}
                         
                         <button 
                           onMouseDown={e => {e.preventDefault(); playClickSound(); const s = textareaRef.current?.selectionStart || 0; updateTextAndCursor(text.substring(0, s-1) + text.substring(s), s-1)}} 
-                          className={`h-16 w-16 rounded-xl bg-white/10 flex items-center justify-center text-white active:bg-white/20 ${settings.enableSplitKeyboard ? 'flex-1 max-w-[60px]' : ''}`}
+                          className={`h-16 w-16 rounded-xl bg-white/10 flex items-center justify-center text-white active:bg-white/20 ${isSplit ? 'flex-1 max-w-[60px]' : ''}`}
                         >
                           ⌫
                         </button>
